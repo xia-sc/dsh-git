@@ -6,7 +6,7 @@ in real time** — click a different session/workspace in the sidebar and the
 panel rebinds to that repository instantly.
 
 **Workflow supported:** branch switch · fetch · pull (fast-forward only) ·
-commit · push · status · recent commits · uncommitted-file list.
+commit · push · status · recent commits · uncommitted-file list · new-branch-from-base.
 
 ## UI
 
@@ -20,6 +20,10 @@ commit · push · status · recent commits · uncommitted-file list.
   (the top row with the Git title — press, drag, release; it stays where
   dropped and is clamped inside the viewport; header buttons/inputs never
   start a drag; double-click the header to snap back to center).
+  A "＋ New branch" button beside the branch switcher opens an inline form:
+  new branch name + base-branch picker (local branches or full remote refs
+  like `origin/feature/x`) — confirming creates the branch from the base and
+  switches to it.
 - **Composer dock pill** (`conversation.input.dock`): a compact, left-aligned
   status pill at the textarea's top-left (branch summary or "not a git
   repository"); clicking it toggles the floating panel.
@@ -32,7 +36,7 @@ One dual-face npm package:
 
 | Half | File | Role |
 | --- | --- | --- |
-| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) mounting the `/dsh-git-rpc` channel via `ctx.connection.rpc.handle` (`authority: "trusted-host"`). Endpoints: `status`, `branches`, `checkout`, `fetch`, `pull`, `commit`, `push`, `log`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. |
+| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) mounting the `/dsh-git-rpc` channel via `ctx.connection.rpc.handle` (`authority: "trusted-host"`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `commit`, `push`, `log`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. |
 | Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@dsh-plugins/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
 
 ## Install
@@ -63,6 +67,7 @@ message is passed as `--message=<msg>` (control chars rejected).
 | `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path}] }` |
 | `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
 | `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }` via `git switch --guess`; the browser pre-checks dirty state and warns before switching; a refusal caused by "local changes would be overwritten" is surfaced with a readable prefix. |
+| `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }` via `git switch --create <branch> <base>` (omitted base = HEAD); creates the branch from the base branch and switches to it. |
 | `fetch` | `{ cwd, remote? }` | `{ message }` (120s timeout) |
 | `pull` | `{ cwd }` | `{ message }` via `git pull --ff-only` (never implicit-merge) |
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |

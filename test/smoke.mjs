@@ -40,7 +40,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid cwd (rejected before any git spawn) for every endpoint
 {
-  const endpoints = ["status", "branches", "checkout", "fetch", "pull", "commit", "push", "log"];
+  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "commit", "push", "log"];
   for (const ep of endpoints) {
     const res = await call(ep, { cwd: "relative/path" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-cwd") {
@@ -57,6 +57,37 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
       throw new Error(`evil branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
     }
+  }
+}
+
+// invalid new-branch / base names (rejected before any git spawn)
+{
+  const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b"];
+  for (const name of evil) {
+    const res = await call("createBranch", { cwd: "C:/valid/abs", branch: name, base: "main" });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
+      throw new Error(`evil new-branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  for (const base of evil) {
+    const res = await call("createBranch", { cwd: "C:/valid/abs", branch: "good-name", base });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
+      throw new Error(`evil base not rejected: ${JSON.stringify(base)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  // HEAD (any case) is not a valid new branch name
+  for (const name of ["HEAD", "head", "Head"]) {
+    const res = await call("createBranch", { cwd: "C:/valid/abs", branch: name, base: "main" });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
+      throw new Error(`HEAD new-branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  // Omitted base means HEAD: valid input, so it dispatches to git (which
+  // fails here with not-a-repo or git-error — either is fine, but not
+  // invalid-branch / invalid-cwd).
+  const res = await call("createBranch", { cwd: "C:/definitely/not/a/repo", branch: "good-name" });
+  if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
+    throw new Error(`createBranch without base should dispatch to git: ${JSON.stringify(res)}`);
   }
 }
 
