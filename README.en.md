@@ -44,7 +44,7 @@ One dual-face npm package:
 ## Install
 
 ```sh
-dsh plugin --profile web add E:/dsh/plugin/dsh-git
+dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
 Then **restart `dsh web`** (bundle rows and the browser roster compose at

@@ -39,7 +39,7 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 ## 安装
 
 ```sh
-dsh plugin --profile web add E:/dsh/plugin/dsh-git
+dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
 然后**重启 `dsh web`**（bundle 行与浏览器 roster 在启动时组合）。刷新后，
