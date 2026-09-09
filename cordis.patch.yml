@@ -4,7 +4,12 @@
 # half of the web transport) is already available. The host half of this
 # package (lib/index.js) mounts the /dsh-git-rpc RPC channel that the browser
 # half (lib/client.js, a dsh.client row) calls for the full Git workflow:
-# status, branches, checkout, fetch, pull, commit, push, log, diffstat.
+# status, branches, checkout, fetch, commit, push, log, diffstat.
 - insert:
     - id: dsh-git
       name: '@dsh-plugins/dsh-git'
+      inject:
+        - connection
+        - llm
+        - credentials
+        - settings
