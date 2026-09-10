@@ -82,6 +82,9 @@ const ctx = {
         if (endpoint === "log") {
           return { ok: true, value: { repo: true, commits: [{ sha: "abc1234", author: "me", subject: "init", refs: "HEAD -> main" }] } };
         }
+        if (endpoint === "generateMessage") {
+          return { ok: true, value: { message: "feat: generated subject", mode: "staged" } };
+        }
         return { ok: true, value: { message: `${endpoint} ok` } };
       }
     }
@@ -117,10 +120,14 @@ if (!store || typeof store.subscribe !== "function" || typeof store.getSnapshot 
   throw new Error("store face missing");
 }
 
+const repoSummary = {
+  cwd: "C:/repo",
+  projectionValues: { modelSelection: { lastUsed: null, next: { provider: "alpha", model: "alpha-large" } } }
+};
 const commonProps = {
   store,
   t: (key, params) => key + (params ? JSON.stringify(params) : ""),
-  useSessions: () => ({ current: "s1", byId: { s1: { cwd: "C:/repo" } } })
+  useSessions: () => ({ current: "s1", byId: { s1: repoSummary } })
 };
 
 // Panel: initial render with no session (current undefined) → renders null.
@@ -153,13 +160,19 @@ const commonProps = {
 }
 
 // Panel: expanded with loaded repo state → the full workbench renders (branch
-// chip, dirty count, branch switcher, new-branch button, changes, commits).
+// chip, dirty count, branch switcher, new-branch button, changes, commits, and
+// the commit tooling row: stage-all + draft basis + AI draft).
 {
   await store.refresh("C:/repo");
   store.setPanelOpen(true);
   const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
-  for (const needle of ["main", "src/a.js", "b.txt", "init", "abc1234"]) {
+  for (const needle of ["main", "src/a.js", "b.txt", "init", "abc1234", "action.stage", "action.generate"]) {
     if (!html.includes(needle)) throw new Error(`expanded panel missing ${JSON.stringify(needle)}`);
+  }
+  // The draft basis select offers all three modes, defaulting to `staged`
+  // (the only basis whose content the commit actually records).
+  for (const mode of ["staged", "unstaged", "all"]) {
+    if (!html.includes(`value="${mode}"`)) throw new Error(`draft basis select missing mode ${mode}`);
   }
   console.log("panel expanded render bytes:", html.length);
 }
@@ -173,10 +186,30 @@ const commonProps = {
   console.log("dock loaded render bytes:", html.length);
 }
 
-for (const endpoint of ["status", "branches", "log", "checkout"]) {
+// The draft verb routes to the endpoint with the session's own model route.
+{
+  await store.verbs.generateMessage("C:/repo", "staged", "alpha", "alpha-large");
+  if (!calls.includes("/dsh-git-rpc/generateMessage")) throw new Error("generateMessage verb did not call the channel");
+}
+
+// The store's act() resolves with the raw result and localizes a coded failure.
+{
+  const ok = await store.act("generate", () => store.verbs.generateMessage("C:/repo", "staged"), (res) => ({ kind: res.ok ? "ok" : "error", text: res.ok ? "done" : "failed" }));
+  if (!ok || ok.ok !== true) throw new Error("act() must resolve with the raw RPC result on success");
+  if (store.getSnapshot().lastResult?.text !== "done") {
+    throw new Error(`act() describe() must own the wording, got ${JSON.stringify(store.getSnapshot().lastResult)}`);
+  }
+  const failed = await store.act("generate", () => Promise.resolve({ ok: false, error: { code: "internal", message: "no staged changes", details: { code: "no-changes", mode: "staged" } } }), () => ({ kind: "error", text: "localized" }));
+  if (failed?.ok !== false) throw new Error("act() must resolve with the raw RPC result on failure");
+  if (store.getSnapshot().lastResult?.text !== "localized") {
+    throw new Error(`act() describe() must own the failure wording, got ${JSON.stringify(store.getSnapshot().lastResult)}`);
+  }
+}
+
+for (const endpoint of ["status", "branches", "log", "checkout", "generateMessage"]) {
   if (!calls.includes(`/dsh-git-rpc/${endpoint}`)) throw new Error(`client never called ${endpoint}`);
 }
 
-console.log(`\nRENDER TEST PASSED (both seats registered, components mount, store shared; react from ${reactRoot})`);
+console.log(`\nRENDER TEST PASSED (both seats registered, components mount, store shared, draft tooling wired; react from ${reactRoot})`);
 
 

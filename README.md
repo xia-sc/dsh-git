@@ -7,18 +7,19 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 重新绑定到对应仓库。
 
 **支持的工作流：** 分支切换 · 拉取更新(fetch) · 拉取合并(pull，仅快进) ·
-提交(commit) · 推送(push) · 状态(status) · 最近提交 · 未提交文件列表 ·
-基于某分支新建分支。
+暂存全部 · 提交(commit，可用 AI 起草提交信息) · 推送(push) · 状态(status) ·
+最近提交 · 未提交文件列表 · 基于某分支新建分支。
 
 ## 界面
 
 - **悬浮面板**（`shell.overlay`）：折叠时不渲染任何元素（不会遮挡输入框）；
   展开后是完整的 Git 工作台（状态行、带 **脏树预检** 的分支切换器——在有
   未提交修改时选择分支，会先显示受影响文件列表警告而不是直接切换，并提供
-  "仍要切换"按钮；fetch/pull/commit/push 操作；可折叠的变更列表与最近提交
-  列表；上次操作输出）。面板**可通过顶栏拖动**（按住带 Git 标题的那一行，
-  拖到哪里就停在哪里，不会拖出视口；顶栏上的按钮/输入框不会触发拖动；
-  双击顶栏回到居中位置）。
+  "仍要切换"按钮；fetch/pull 操作；**提交区**——"暂存全部"按钮、AI 生成依据
+  选择器、"✨ AI 生成"按钮、提交信息输入框与提交按钮；可折叠的变更列表与
+  最近提交列表；上次操作输出）。面板**可通过顶栏拖动**（按住带 Git 标题的
+  那一行，拖到哪里就停在哪里，不会拖出视口；顶栏上的按钮/输入框不会触发
+  拖动；双击顶栏回到居中位置）。
   分支切换器旁边的"＋ 新建分支"按钮会展开一个内联表单：新分支名 + 基分支
   选择器（本地分支或 `origin/feature/x` 这样的完整远端引用）——确认后从
   该基分支创建新分支并切换过去。
@@ -27,13 +28,29 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 - 两处界面共享同一个 store，状态永远一致，并都会随当前会话（及其 cwd）
   切换而重新绑定。
 
+### 提交区与 AI 起草
+
+提交区按真实操作顺序排列：**暂存全部 → AI 生成 → 提交**。
+
+- **暂存全部**：`git add --all`（含删除与未跟踪文件）。工作区干净时置灰。
+  这是"只有未暂存改动、点提交却报错"的正解——提交本身依然**不会**隐式暂存。
+- **AI 生成依据**：三选一，决定把哪一部分改动交给模型：
+  `已暂存`（默认）、`未暂存`、`全部`。默认 `已暂存`，因为**只有它是本次
+  提交真正会记录的内容**——用其他依据生成的描述可能与实际提交不符。
+- **✨ AI 生成**：把选中的改动（diffstat + diff，截断后）交给当前会话所选
+  模型，生成的提交信息直接填入输入框；不满意可改，也可以直接手写。
+
+生成用的模型路由取当前会话的 `modelSelection` 投影（待生效的选择优先，
+其次是上次实际使用），取不到时回落到宿主注册的第一条路由。失败会以
+本地化文案显示在"上次操作输出"里（无可用改动 / 未配置模型 / 生成失败等）。
+
 ## 架构
 
 一个双面 npm 包：
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`commit`、`push`、`log`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。 |
+| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成走注入的 `llm` 服务。 |
 | 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@dsh-plugins/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
 
 ### 为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）
@@ -90,20 +107,33 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }`，经 `git switch --create <branch> <base>`（缺省 base 即 HEAD）；从基分支创建新分支并切换过去。 |
 | `fetch` | `{ cwd, remote? }` | `{ message }`（120s 超时） |
 | `pull` | `{ cwd }` | `{ message }`，经 `git pull --ff-only`（绝不隐式合并） |
+| `stage` | `{ cwd }` | `{ message }`，经 `git add --all` |
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
 | `push` | `{ cwd }` | `{ message }`（120s 超时） |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
+| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-empty`、`cancelled`、`llm-failed`。 |
+
+> 失败结果的 `error.code` 在线路上固定为 `"internal"`（Connection 信封只要求它是字符串），
+> 插件自己的诊断码放在 `error.details.code`；客户端按该码做本地化文案。
 
 ## 设计决策与边界
 
 - **pull 固定 `--ff-only`**：不产生意外的合并提交；冲突以错误形式呈现，
   由用户在自己的工具里解决。
-- **commit 不暂存**：只提交已暂存的内容（`git add` 请在自己的工具里完成）。
+- **commit 不暂存**：只提交已暂存的内容。想一次提交全部改动，用提交区的
+  "暂存全部"按钮（`git add --all`），而不是让提交隐式暂存。
+- **AI 生成会把改动的 diff 发给你配置的模型提供方**——可能是第三方网关。
+  这是显式点击"✨ AI 生成"才会发生的联网行为；插件本身不联网。diff 截断到
+  12000 字符后发送，且不发送任何仓库外的内容。
 - **push/pull 凭据**来自系统（Git Credential Manager / SSH agent）；插件
-  绝不碰凭据存储。
+  绝不碰凭据存储。AI 生成同样不接触凭据——API key 由模型适配器自己解析。
 - **插件绝不修改 git config**；缺 author 时给出明确错误而不是悄悄补写。
+- **插件不导入任何 `@deepseek-ai/*` 运行时包**（只用 `node:` 内置模块和
+  `@deepseek-ai/cordis`）。以 pnpm `link:` 方式安装时，宿主包无法从插件的真实
+  源码路径解析，声明这类导入会让插件在加载期就崩溃；生成所需的请求构造与流
+  式拼装因此就近实现。`test/generate.mjs` 直接测这些单元。
 - 面板操作是普通 UI 行为（和 Cordis 面板一样），不会写入会话日志 /
-  模型提示词。
+  模型提示词。AI 生成只填输入框，不会自动提交。
 
 ## 开发说明
 
@@ -114,7 +144,10 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
     拦截子进程管道 stdio）；
   - `node test/host-mount.mjs` —— 在真实 Cordis + 真实 `dsh-client-connection`
     上挂载插件行（从 `DSH_HOME` 的 profile 解析 DSH 包，找不到则 SKIP）；
-  - `node test/render.mjs` —— 双界面真实 React SSR 渲染（需要一份 react/react-dom，
-    可用 `DSH_GIT_REACT_ROOT` 指定，找不到则 SKIP）。
-  - 也提供 `npm test`（依次跑三个）。
+  - `node test/generate.mjs` —— AI 生成单元测试：路由解析、prompt 组装、截断、
+    流式拼装（block-end 与纯 delta 两条路径）、终止失败/取消/空输出；
+  - `node test/render.mjs` —— 双界面真实 React SSR 渲染，含提交区三个控件与
+    `act()` 的结果回传/本地化（需要一份 react/react-dom，可用
+    `DSH_GIT_REACT_ROOT` 指定，找不到则 SKIP）。
+  - 也提供 `npm test`（依次跑四个）。
   git 命令集对照运行中的服务端做端到端验证。

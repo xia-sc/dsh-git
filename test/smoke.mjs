@@ -7,8 +7,8 @@
 import { EventEmitter } from "node:events";
 import { apply, inject } from "../lib/index.js";
 
-if (!Array.isArray(inject) || !inject.includes("webServer") || !inject.includes("connection")) {
-  throw new Error(`host inject must declare webServer + connection: ${JSON.stringify(inject)}`);
+if (!Array.isArray(inject) || !inject.includes("webServer") || !inject.includes("connection") || !inject.includes("llm")) {
+  throw new Error(`host inject must declare webServer + connection + llm: ${JSON.stringify(inject)}`);
 }
 
 // ── route capture ────────────────────────────────────────────────────────────
@@ -18,12 +18,18 @@ if (!Array.isArray(inject) || !inject.includes("webServer") || !inject.includes(
 let route = null;
 let reject = undefined;
 let effects = 0;
+const llm = {
+  listProviders: () => [],
+  listModels: async () => [],
+  stream: async function* () {}
+};
 const ctx = {
   effect(fn) { effects += 1; return fn(); },
   get(name) {
     if (name !== "connection") return undefined;
     return { requestRejection: () => reject };
   },
+  llm,
   connection: {
     rpc: {
       handle() { throw new Error("connection.rpc.handle must not be used on dsh >= 0.1.5-rc.1"); }
@@ -150,12 +156,36 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid cwd (rejected before any git spawn) for every endpoint
 {
-  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "commit", "push", "log"];
+  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "commit", "push", "log", "generateMessage"];
   for (const ep of endpoints) {
     const res = await call(ep, { cwd: "relative/path" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-cwd") {
       throw new Error(`${ep}: expected invalid-cwd, got ${JSON.stringify(res)}`);
     }
+  }
+}
+
+// generateMessage validates its mode before reading any diff or calling a model
+{
+  for (const mode of ["everything", "STAGED", "", 42, {}]) {
+    const res = await call("generateMessage", { cwd: "C:/valid/abs", mode });
+    if (res.ok || pluginCode(res) !== "invalid-mode") {
+      throw new Error(`bad mode not rejected: ${JSON.stringify(mode)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  // An absent mode is valid (it defaults), so it must reach the git read and
+  // fail there rather than on validation.
+  const res = await call("generateMessage", { cwd: "C:/definitely/not/a/repo" });
+  if (pluginCode(res) === "invalid-mode" || pluginCode(res) === "invalid-cwd") {
+    throw new Error(`absent mode must default, not reject: ${JSON.stringify(res)}`);
+  }
+}
+
+// stage reports the caller's bad cwd, never a repo operation
+{
+  const res = await call("stage", { cwd: "relative/path" });
+  if (res.ok || pluginCode(res) !== "invalid-cwd") {
+    throw new Error(`stage must validate cwd: ${JSON.stringify(res)}`);
   }
 }
 

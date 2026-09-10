@@ -1,7 +1,7 @@
 {
   "name": "@dsh-plugins/dsh-git",
-  "version": "0.3.1",
-  "description": "Complete Git management for the DeepSeek Harness Web GUI: branch switch, new-branch-from-base, fetch, pull, commit, push, status — as a collapsible floating panel that follows the current session's workspace.",
+  "version": "0.4.0",
+  "description": "Complete Git management for the DeepSeek Harness Web GUI: branch switch, new-branch-from-base, fetch, pull, stage-all, commit (with AI-drafted message), push, status — as a collapsible floating panel that follows the current session's workspace.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -15,7 +15,7 @@
   ],
   "license": "MIT",
   "scripts": {
-    "test": "node test/smoke.mjs && node test/host-mount.mjs && node test/render.mjs"
+    "test": "node test/smoke.mjs && node test/host-mount.mjs && node test/generate.mjs && node test/render.mjs"
   },
   "dsh": {
     "bundle": {
