@@ -66,6 +66,18 @@ await app.plugin({
   }
 }).await();
 
+// dsh-llm stand-in: the plugin injects `llm` for commit-message generation.
+await app.plugin({
+  name: "llm",
+  apply(ctx) {
+    ctx.provide("llm", {
+      listProviders: () => [],
+      listModels: async () => [],
+      stream: async function* () {}
+    });
+  }
+}).await();
+
 // The real Connection host service, built the way dsh-client-connection does.
 await app.plugin({
   name: "client-connection",

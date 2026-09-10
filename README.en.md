@@ -8,7 +8,8 @@ in real time** — click a different session/workspace in the sidebar and the
 panel rebinds to that repository instantly.
 
 **Workflow supported:** branch switch · fetch · pull (fast-forward only) ·
-commit · push · status · recent commits · uncommitted-file list · new-branch-from-base.
+stage all · commit (with an AI-drafted message) · push · status · recent
+commits · uncommitted-file list · new-branch-from-base.
 
 ## UI
 
@@ -17,8 +18,10 @@ commit · push · status · recent commits · uncommitted-file list · new-branc
   workbench (status line, branch switcher with **dirty-tree pre-check** —
   selecting a branch while uncommitted changes exist shows a warning listing
   the affected files instead of switching, with a "switch anyway" escape
-  hatch, fetch/pull/commit/push actions, collapsible changes and recent-commit
-  lists, last-operation output). The panel is **draggable by its header bar**
+  hatch, fetch/pull actions, a **commit area** — stage-all button, draft-basis
+  picker, "✨ AI draft" button, message input and commit button — collapsible
+  changes and recent-commit lists, last-operation output). The panel is
+  **draggable by its header bar**
   (the top row with the Git title — press, drag, release; it stays where
   dropped and is clamped inside the viewport; header buttons/inputs never
   start a drag; double-click the header to snap back to center).
@@ -32,13 +35,35 @@ commit · push · status · recent commits · uncommitted-file list · new-branc
 - Both seats share one store, so they always agree, and both re-bind when the
   current session (and its cwd) changes.
 
+### The commit area and AI drafting
+
+The commit area follows the real order of operations: **stage all → draft → commit**.
+
+- **Stage all**: `git add --all` (deletions and untracked files included).
+  Disabled while the tree is clean. This is the answer to "only unstaged
+  changes exist, so Commit fails" — committing itself still never stages
+  implicitly.
+- **Draft basis**: one of `Staged` (default), `Unstaged`, `Everything` — which
+  part of the change set is handed to the model. `Staged` is the default
+  because **it is the only basis whose content the commit actually records**;
+  a message drafted from anything else may describe changes that will not be
+  committed.
+- **✨ AI draft**: sends the selected change set (diffstat + diff, truncated)
+  to the model the current session has selected and drops the generated
+  message into the input. Edit it, or just write your own.
+
+The model route comes from the current session's `modelSelection` projection
+(pending pick first, then last used), falling back to the host's first
+registered route. Failures are reported in the last-operation output with a
+localized sentence (no changes / no model configured / draft failed, …).
+
 ## Architecture
 
 One dual-face npm package:
 
 | Half | File | Role |
 | --- | --- | --- |
-| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `commit`, `push`, `log`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. |
+| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `stage`, `commit`, `push`, `log`, `generateMessage`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. AI drafting goes through the injected `llm` service. |
 | Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@dsh-plugins/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
 
 ### Why the route is self-owned (dsh >= 0.1.5-rc.1)
@@ -101,35 +126,59 @@ message is passed as `--message=<msg>` (control chars rejected).
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }` via `git switch --create <branch> <base>` (omitted base = HEAD); creates the branch from the base branch and switches to it. |
 | `fetch` | `{ cwd, remote? }` | `{ message }` (120s timeout) |
 | `pull` | `{ cwd }` | `{ message }` via `git pull --ff-only` (never implicit-merge) |
+| `stage` | `{ cwd }` | `{ message }` via `git add --all` |
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
 | `push` | `{ cwd }` | `{ message }` (120s timeout) |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
+| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-empty`, `cancelled`, `llm-failed`. |
+
+> A failed result carries `error.code === "internal"` on the wire (the Connection
+> envelope only requires a string), with the plugin's own diagnostic in
+> `error.details.code`; the client localizes from that code.
 
 ## Design decisions & boundaries
 
 - **pull is `--ff-only`**: no surprise merge commits; conflicts surface as an
   error the user resolves in their own tooling.
-- **commit does not stage**: it commits what is staged (`git add` is the
-  user's job, in their own tooling).
+- **commit does not stage**: it commits what is staged. To commit everything at
+  once, use the commit area's **Stage all** button (`git add --all`) rather than
+  making commit stage implicitly.
+- **AI drafting sends the change set's diff to whichever model provider you
+  configured** — possibly a third-party gateway. It only happens when you click
+  "✨ AI draft"; the plugin itself never calls the network. The diff is
+  truncated to 12000 characters, and nothing outside the repository is sent.
 - **push/pull credentials** come from the system (Git Credential Manager /
-  SSH agent); the plugin never touches credential storage.
+  SSH agent); the plugin never touches credential storage. AI drafting never
+  touches credentials either — the model adapter resolves its own API key.
 - **The plugin never mutates git config**; missing author reports a clear
   error instead.
+- **The plugin imports no `@deepseek-ai/*` runtime package** (only `node:`
+  builtins and `@deepseek-ai/cordis`). Under a pnpm `link:` install the host
+  packages do not resolve from the plugin's real source path, so such an import
+  would make the plugin fail at load time; the request construction and stream
+  assembly generation needs are therefore implemented locally and tested
+  directly by `test/generate.mjs`.
 - Panel operations are plain UI actions (like the Cordis panel) and are not
-  written to the session log / model prompt.
+  written to the session log / model prompt. AI drafting only fills the input;
+  it never commits by itself.
 
 ## Development notes
 
 - The browser bundle is hand-written (no build step); edits to `lib/client.js`
   are picked up on refresh (no-cache), host-side edits need a `dsh web`
   restart.
-- Tests (`npm test` runs all three):
+- Tests (`npm test` runs all four):
   - `node test/smoke.mjs` — route, envelope, endpoint dispatch and input
     validation (no git spawn: the session sandbox blocks child-process piped
     stdio);
   - `node test/host-mount.mjs` — mounts the row on a real Cordis host with the
     real `dsh-client-connection` (resolved from the `DSH_HOME` profile; SKIPs
     when no profile is installed);
-  - `node test/render.mjs` — real React SSR render of both seats (needs a
-    react/react-dom copy, e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without one).
+  - `node test/generate.mjs` — the AI-draft units: route resolution, prompt
+    assembly, truncation, stream assembly (both the `block-end` and the
+    delta-only path), terminal failure / abort / empty output;
+  - `node test/render.mjs` — real React SSR render of both seats, including the
+    three commit-area controls and `act()`'s result plumbing and localization
+    (needs a react/react-dom copy, e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without
+    one).
 - The git command set is verified end-to-end against the running server.
