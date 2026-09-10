@@ -33,8 +33,21 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），通过 `ctx.connection.rpc.handle` 挂载 `/dsh-git-rpc` 通道（`authority: "trusted-host"`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`commit`、`push`、`log`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。 |
+| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`commit`、`push`、`log`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。 |
 | 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@dsh-plugins/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
+
+### 为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）
+
+dsh 0.1.5-rc.1 起，外部插件不能再调用 `ctx.connection.rpc.handle()`：
+`HostConnectionService.rpc` 闭包持有的是 **connection 插件自己的 Context**（`inject`
+只有 `["credentials"]`），注册时执行
+`owner.effect(() => owner.webServer.register(route))`，而该插件只在内部的
+`ctx.inject(["webServer"], …)` 作用域里取得到 `webServer`。于是无论调用方 inject 了
+什么，这一行都会以 `cannot get property "webServer" without inject` 挂载失败
+（0.3.0 正是如此，插件在 0.1.5-rc.1 上装不起来）。本插件因此改为自己注册
+`/dsh-git-rpc` 路由、自己实现同一套 RPC 信封；请求围栏仍交给 connection 服务的
+`requestRejection`，安全等级与 `/api` 完全一致。`test/host-mount.mjs` 在真实 Cordis +
+真实 Connection 服务上守护这一点。
 
 ## 安装
 
@@ -43,7 +56,9 @@ dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
 然后**重启 `dsh web`**（bundle 行与浏览器 roster 在启动时组合）。刷新后，
-当前会话工作区是 git 仓库时，输入框下方会出现 dock 行。
+当前会话工作区是 git 仓库时，输入框上方会出现 dock 胶囊，点击即可展开面板。
+
+要求 **dsh ≥ 0.1.5-rc.1**（宿主半自持 `/dsh-git-rpc` 路由，见上文架构说明）。
 
 卸载：
 
@@ -52,6 +67,15 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
 ```
 
 ## RPC 约定（`/dsh-git-rpc`）
+
+浏览器侧通过 `ctx.connection.rpc.call("/dsh-git-rpc", endpoint, { args })` 调用；宿主侧
+是本插件自持的 `/dsh-git-rpc/*` 前缀路由，收发与 `/api` 相同的 Connection 信封：
+
+- 请求：`POST /dsh-git-rpc/<endpoint>`，`content-type: application/json`，
+  `{ type: "client-request", rpcId, method: <endpoint>, payload: { args } }`
+- 响应：`{ type: "server-response", rpcId, result: { ok: true, value } | { ok: false, error } }`
+- 围栏：`connection.requestRejection`（Host/Origin + 浏览器会话 Cookie）；非 `POST` → 405，
+  非 JSON → 415，请求体超限 → 413，路径不属于本通道 → 404。
 
 载荷使用 `{ args }` 约定。`cwd` 必须是绝对路径；`branch` 匹配
 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`（不允许前导 `-`、`..`、`@{`、`\`、空白、
@@ -85,6 +109,12 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
 
 - 浏览器 bundle 为手写（无构建步骤）；改 `lib/client.js` 刷新即生效
   （no-cache），改宿主半需要重启 `dsh web`。
-- 测试：`node test/smoke.mjs`（校验/接线，不 spawn git——会话沙箱拦截
-  子进程管道 stdio）与 `node test/render.mjs`（双界面真实 React SSR 渲染）。
+- 测试：
+  - `node test/smoke.mjs` —— 路由/信封/端点分发/入参校验（不 spawn git：会话沙箱
+    拦截子进程管道 stdio）；
+  - `node test/host-mount.mjs` —— 在真实 Cordis + 真实 `dsh-client-connection`
+    上挂载插件行（从 `DSH_HOME` 的 profile 解析 DSH 包，找不到则 SKIP）；
+  - `node test/render.mjs` —— 双界面真实 React SSR 渲染（需要一份 react/react-dom，
+    可用 `DSH_GIT_REACT_ROOT` 指定，找不到则 SKIP）。
+  - 也提供 `npm test`（依次跑三个）。
   git 命令集对照运行中的服务端做端到端验证。

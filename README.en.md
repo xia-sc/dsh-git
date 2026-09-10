@@ -38,8 +38,23 @@ One dual-face npm package:
 
 | Half | File | Role |
 | --- | --- | --- |
-| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) mounting the `/dsh-git-rpc` channel via `ctx.connection.rpc.handle` (`authority: "trusted-host"`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `commit`, `push`, `log`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. |
+| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `commit`, `push`, `log`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. |
 | Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@dsh-plugins/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
+
+### Why the route is self-owned (dsh >= 0.1.5-rc.1)
+
+Since dsh 0.1.5-rc.1 an outside plugin can no longer call
+`ctx.connection.rpc.handle()`: `HostConnectionService.rpc` closes over the
+connection plugin's **own** Context (`inject` is only `["credentials"]`) and
+registers through it (`owner.effect(() => owner.webServer.register(route))`),
+while that plugin only resolves `webServer` inside an inner
+`ctx.inject(["webServer"], …)` scope. Whatever the caller injects, the row
+therefore failed to mount with `cannot get property "webServer" without inject`
+— which is exactly what 0.3.0 did. This build registers `/dsh-git-rpc` itself
+and implements the same RPC envelope; the request fence still comes from the
+connection service's `requestRejection`, so the channel is exactly as trusted
+as `/api`. `test/host-mount.mjs` guards this against a real Cordis host and the
+real Connection service.
 
 ## Install
 
@@ -48,8 +63,11 @@ dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
 Then **restart `dsh web`** (bundle rows and the browser roster compose at
-boot). After refresh, the badge appears bottom-left; the dock line appears
-under the composer once the current session's workspace is a git repository.
+boot). After refresh, the dock pill appears above the composer once the current
+session's workspace is a git repository; click it to open the panel.
+
+Requires **dsh >= 0.1.5-rc.1** (the host half owns its `/dsh-git-rpc` route; see
+the architecture note above).
 
 Uninstall:
 
@@ -58,6 +76,17 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
 ```
 
 ## RPC contract (`/dsh-git-rpc`)
+
+The browser calls `ctx.connection.rpc.call("/dsh-git-rpc", endpoint, { args })`;
+the host side is this plugin's own `/dsh-git-rpc/*` prefix route, speaking the
+same Connection envelope as `/api`:
+
+- Request: `POST /dsh-git-rpc/<endpoint>`, `content-type: application/json`,
+  `{ type: "client-request", rpcId, method: <endpoint>, payload: { args } }`
+- Response: `{ type: "server-response", rpcId, result: { ok: true, value } | { ok: false, error } }`
+- Fence: `connection.requestRejection` (Host/Origin + browser session cookie);
+  non-`POST` → 405, non-JSON → 415, oversized body → 413, path outside the
+  channel → 404.
 
 Payloads use the `{ args }` convention. `cwd` must be an absolute path;
 `branch` matches `^[A-Za-z0-9][A-Za-z0-9._/-]*$` (no leading `-`, no `..`,
@@ -94,7 +123,13 @@ message is passed as `--message=<msg>` (control chars rejected).
 - The browser bundle is hand-written (no build step); edits to `lib/client.js`
   are picked up on refresh (no-cache), host-side edits need a `dsh web`
   restart.
-- Tests: `node test/smoke.mjs` (validation/wiring, no git spawn — the session
-  sandbox blocks child-process piped stdio) and `node test/render.mjs` (real
-  React SSR render of both seats). The git command set is verified end-to-end
-  against the running server.
+- Tests (`npm test` runs all three):
+  - `node test/smoke.mjs` — route, envelope, endpoint dispatch and input
+    validation (no git spawn: the session sandbox blocks child-process piped
+    stdio);
+  - `node test/host-mount.mjs` — mounts the row on a real Cordis host with the
+    real `dsh-client-connection` (resolved from the `DSH_HOME` profile; SKIPs
+    when no profile is installed);
+  - `node test/render.mjs` — real React SSR render of both seats (needs a
+    react/react-dom copy, e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without one).
+- The git command set is verified end-to-end against the running server.

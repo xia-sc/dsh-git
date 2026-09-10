@@ -3,10 +3,49 @@
 // components' initial renders do not crash.
 // Run: node test/render.mjs
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-const requireFromCache = createRequire("D:/tool/npm/cache/_npx/1e7f6d9597241db0/node_modules/x.js");
-const React = requireFromCache("react");
-const { renderToStaticMarkup } = requireFromCache("react-dom/server");
+// React is not a dependency of this plugin: the browser bundle borrows the
+// shell's own `react` seed word. The test therefore loads a copy from an
+// explicit DSH_GIT_REACT_ROOT, the installed DSH profile, or an npx cache; when
+// none is present it reports SKIP instead of failing the checkout.
+function loadReact() {
+  const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
+  const roots = [
+    process.env.DSH_GIT_REACT_ROOT,
+    join(dshHome, "profiles", "web", "node_modules"),
+    join(dshHome, "profiles", "node_modules"),
+    "D:/tool/npm/cache/_npx/1e7f6d9597241db0/node_modules"
+  ].filter((root) => typeof root === "string" && root !== "");
+  const failures = [];
+  for (const root of roots) {
+    if (!existsSync(join(root, "react", "package.json"))) continue;
+    try {
+      const req = createRequire(join(root, "resolve-anchor.js"));
+      return { React: req("react"), server: req("react-dom/server"), root };
+    } catch (error) {
+      failures.push(`${root}: ${error.message}`);
+    }
+  }
+  try {
+    const req = createRequire(import.meta.url);
+    return { React: req("react"), server: req("react-dom/server"), root: "(node resolution)" };
+  } catch (error) {
+    failures.push(`node resolution: ${error.message}`);
+  }
+  return { skip: failures };
+}
+
+const reactResolution = loadReact();
+if (reactResolution.skip !== undefined) {
+  console.log("SKIP: react/react-dom not found for the render test; set DSH_GIT_REACT_ROOT to a node_modules that has them.");
+  for (const failure of reactResolution.skip) console.log(`  tried ${failure}`);
+  process.exit(0);
+}
+const { React, server: ReactDOMServer, root: reactRoot } = reactResolution;
+const { renderToStaticMarkup } = ReactDOMServer;
 
 // Load the client bundle through the module-loader handoff.
 globalThis.window = {
@@ -22,13 +61,31 @@ const mod = handoff.factory((spec) => {
   throw new Error(`unexpected require: ${spec}`);
 });
 
-// Capture the slot registrations performed by apply().
+// Capture the slot registrations performed by apply(). The rpc stub answers
+// the three load endpoints so the expanded seats render real content.
+const calls = [];
 const registrations = [];
 let activeReg = null;
 const ctx = {
   effect() { return () => {}; },
   locale: { register() { return () => {}; } },
-  connection: { rpc: { call: async () => ({ ok: true, value: {} }) } },
+  connection: {
+    rpc: {
+      call: async (channel, endpoint) => {
+        calls.push(`${channel}/${endpoint}`);
+        if (endpoint === "status") {
+          return { ok: true, value: { repo: true, branch: "main", detached: false, oid: "abc1234", upstream: "origin/main", ahead: 1, behind: 0, dirty: 2, changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }] } };
+        }
+        if (endpoint === "branches") {
+          return { ok: true, value: { repo: true, current: "main", local: [{ name: "main", current: true, sha: "abc1234", upstream: "origin/main" }, { name: "dev", current: false, sha: "def5678", upstream: null }], remote: [{ name: "origin/main", short: "main" }] } };
+        }
+        if (endpoint === "log") {
+          return { ok: true, value: { repo: true, commits: [{ sha: "abc1234", author: "me", subject: "init", refs: "HEAD -> main" }] } };
+        }
+        return { ok: true, value: { message: `${endpoint} ok` } };
+      }
+    }
+  },
   slots: {
     inject(name, cb) { registrations.push({ slot: name, cb }); },
     register(opts, comp) {
@@ -95,6 +152,31 @@ const commonProps = {
   if (res.ok !== true) throw new Error("checkout verb failed");
 }
 
-console.log("\nRENDER TEST PASSED (both seats registered, components mount, store shared)");
+// Panel: expanded with loaded repo state → the full workbench renders (branch
+// chip, dirty count, branch switcher, new-branch button, changes, commits).
+{
+  await store.refresh("C:/repo");
+  store.setPanelOpen(true);
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  for (const needle of ["main", "src/a.js", "b.txt", "init", "abc1234"]) {
+    if (!html.includes(needle)) throw new Error(`expanded panel missing ${JSON.stringify(needle)}`);
+  }
+  console.log("panel expanded render bytes:", html.length);
+}
+
+// Dock: loaded repo state → the branch summary pill.
+{
+  const html = renderToStaticMarkup(React.createElement(bySlot["conversation.input.dock"].comp, commonProps));
+  if (!html.includes("main") || !html.includes("●2")) {
+    throw new Error(`dock pill missing the branch summary: ${html}`);
+  }
+  console.log("dock loaded render bytes:", html.length);
+}
+
+for (const endpoint of ["status", "branches", "log", "checkout"]) {
+  if (!calls.includes(`/dsh-git-rpc/${endpoint}`)) throw new Error(`client never called ${endpoint}`);
+}
+
+console.log(`\nRENDER TEST PASSED (both seats registered, components mount, store shared; react from ${reactRoot})`);
 
 

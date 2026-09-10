@@ -1,6 +1,6 @@
 {
   "name": "@dsh-plugins/dsh-git",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Complete Git management for the DeepSeek Harness Web GUI: branch switch, new-branch-from-base, fetch, pull, commit, push, status — as a collapsible floating panel that follows the current session's workspace.",
   "type": "module",
   "main": "lib/index.js",
@@ -14,6 +14,9 @@
     "cordis.patch.yml"
   ],
   "license": "MIT",
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/host-mount.mjs && node test/render.mjs"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
