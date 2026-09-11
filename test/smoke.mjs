@@ -256,9 +256,10 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   if (res.ok || pluginCode(res) === "invalid-remote") throw new Error(`fetch without remote should not be invalid-remote: ${JSON.stringify(res)}`);
 }
 
-// invalid commit messages
+// invalid commit messages: empty, over-long, and messages carrying control
+// characters. A line feed and a tab are legal (a message may have a body).
 {
-  const evil = ["", "   ", "a\u0000b", "a\nb", "a\tb", "x".repeat(10001)];
+  const evil = ["", "   ", "\n\n", "a\u0000b", "a\u000bb", "a\u007fb", "a\u001bb", "x".repeat(10001), 42, null, undefined, {}];
   for (const msg of evil) {
     const res = await call("commit", { cwd: "C:/valid/abs", message: msg });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-message") {

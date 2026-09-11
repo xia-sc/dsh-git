@@ -115,8 +115,15 @@ same Connection envelope as `/api`:
 
 Payloads use the `{ args }` convention. `cwd` must be an absolute path;
 `branch` matches `^[A-Za-z0-9][A-Za-z0-9._/-]*$` (no leading `-`, no `..`,
-`@{`, `\`, whitespace, control chars); `remote` is a plain segment; the commit
-message is passed as `--message=<msg>` (control chars rejected).
+`@{`, `\`, whitespace, control chars); `remote` is a plain segment. The commit
+message is a real message: one subject line plus an optional multi-line body.
+CRLF becomes LF, trailing whitespace is stripped per line, leading/trailing
+blank lines are dropped and runs of blank lines collapse to one (so the single
+blank line between subject and body is preserved); empty, over-long (>10000
+characters), and control-character-carrying messages are rejected with
+`invalid-message`. The message reaches git on stdin via
+`git commit --cleanup=whitespace --file=-`, so spaces, quotes, line feeds,
+shell metacharacters, and leading dashes are all recorded verbatim.
 
 | Endpoint | args | Result (`value`) |
 | --- | --- | --- |
@@ -181,4 +188,10 @@ message is passed as `--message=<msg>` (control chars rejected).
     three commit-area controls and `act()`'s result plumbing and localization
     (needs a react/react-dom copy, e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without
     one).
+- `npm run test:commit` — **end-to-end**: really spawns git in a throwaway
+  repository, commits through the plugin's own `/dsh-git-rpc/commit` route, and
+  reads the message back with `git log --format=%B` (multi-line, CRLF, non-ASCII,
+  leading `-`, shell metacharacters…), then confirms a rejected message creates
+  no commit. It needs piped child-process stdio, so it is deliberately **not**
+  part of `npm test` — run it from an ordinary terminal.
 - The git command set is verified end-to-end against the running server.

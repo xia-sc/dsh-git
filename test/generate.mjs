@@ -5,7 +5,7 @@
 // spawning git with piped stdio (EPERM), so the route cannot reach the LLM half
 // here. The route half — envelope, validation, endpoint dispatch — is covered by
 // test/smoke.mjs.
-import { clampForModel, generationPrompt, requestCommitMessage, resolveLlmRoute } from "../lib/index.js";
+import { clampForModel, generationPrompt, normalizeCommitMessage, requestCommitMessage, resolveLlmRoute } from "../lib/index.js";
 
 let failures = 0;
 function check(label, condition, detail) {
@@ -187,8 +187,50 @@ function fakeLlm(options = {}) {
   check("stream: blank output is rejected", failure?.pluginCode === "llm-empty", String(failure?.pluginCode));
 }
 
+// ── commit-message normalization ─────────────────────────────────────────────
+// The regression this guards: a subject+body message (exactly what the
+// generation prompt above asks for) used to be rejected as a "control
+// character", so every drafted message failed to commit on push/commit.
+{
+  const cases = [
+    // [ input, expected normalized message or null ]
+    ["feat: add thing", "feat: add thing"],
+    ["  feat: add thing  ", "feat: add thing"],
+    ["subject\n\nbody line", "subject\n\nbody line"],
+    ["subject\r\n\r\nbody line", "subject\n\nbody line"],
+    ["subject\rbody", "subject\nbody"],
+    ["subject\n\n\n\nbody", "subject\n\nbody"],
+    ["\n\nsubject\n\nbody\n\n", "subject\n\nbody"],
+    ["subject\n\tindented body", "subject\n\tindented body"],
+    ["subject\nline with trailing space   \nbody", "subject\nline with trailing space\nbody"],
+    ["subject\nbody", "subject\nbody"],
+    ["", null],
+    ["   ", null],
+    ["\n\n", null],
+    ["\t\t", null],
+    ["a\u0000b", null],
+    ["a\u000bb", null],
+    ["a\u001bb", null],
+    ["a\u007fb", null],
+    [42, null],
+    [null, null],
+    [undefined, null],
+    [{}, null],
+    ["x".repeat(10000), "x".repeat(10000)],
+    ["x".repeat(10001), null]
+  ];
+  for (const [input, expected] of cases) {
+    const actual = normalizeCommitMessage(input);
+    check(
+      `normalize: ${String(JSON.stringify(input)).slice(0, 40)}`,
+      actual === expected,
+      `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+    );
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} GENERATION TEST(S) FAILED`);
   process.exit(1);
 }
-console.log("GENERATION UNIT TESTS PASSED (route, prompt, clamping, stream assembly, failures)");
+console.log("GENERATION UNIT TESTS PASSED (route, prompt, clamping, stream assembly, failures, message normalization)");
