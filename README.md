@@ -8,7 +8,7 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 
 **支持的工作流：** 分支切换 · 拉取更新(fetch) · 拉取合并(pull，仅快进) ·
 暂存全部 · 提交(commit，可用 AI 起草提交信息) · 推送(push) · 状态(status) ·
-最近提交 · 未提交文件列表 · 基于某分支新建分支。
+最近提交 · 未提交文件列表 · **点击变更看差异** · 基于某分支新建分支。
 
 ## 界面
 
@@ -24,10 +24,36 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   分支切换器旁边的"＋ 新建分支"按钮会展开一个内联表单：新分支名 + 基分支
   选择器（本地分支或 `origin/feature/x` 这样的完整远端引用）——确认后从
   该基分支创建新分支并切换过去。
+- **点击变更看差异**：点变更列表里的任意一行，面板会从 400px 的单栏展开成
+  两栏——左边照旧是完整工作台，右边是该文件的 unified diff（见下文
+  「差异查看」）。再点同一行、或点差异标题栏的 `×`，就收回单栏。
 - **输入框胶囊**（`conversation.input.dock`）：输入框左上角的紧凑型左对齐
   状态胶囊（分支摘要，或"当前工作区不是 Git 仓库"）；点击它展开/收起悬浮面板。
 - 两处界面共享同一个 store，状态永远一致，并都会随当前会话（及其 cwd）
-  切换而重新绑定。
+  切换而重新绑定。切换工作区会清空已选中的文件——绝不让面板显示别的仓库的内容。
+
+### 差异查看
+
+点变更列表里的一行，就在右侧显示该文件的 git diff。左侧列表是它的导航：
+行高亮表示"正在看这一个"，首次点击会自动把变更列表展开成完整列表。
+
+- **可拖拽调宽**：拖动**面板最右侧那条边**即改差异栏宽度——左栏（工作台）宽度不变，
+  面板整体变宽、差异栏跟着长；双击这条边复位。面板始终留在视口内，窗口变窄时
+  会自动收回；拖动时面板会就地锚定左边缘，所以指针与这条边是 1:1 跟手的。
+- **未暂存 / 已暂存**：默认自动跟随数据——未暂存有内容就显示未暂存，否则显示
+  已暂存；顶部两个 chip 可手动切换，空的一侧置灰。同一个文件两边都有改动时，
+  一次点击看到的是最关心的那一侧，另一侧一键可达。
+- **自动刷新**：暂存、提交、切分支、刷新之后，打开的差异会自己重读——未暂存
+  变空时会自动落到已暂存。
+- **行号与配色**：左右两列行号（旧/新）取自每个 hunk 头，`+`/`-` 行走主题的
+  成功/错误色，hunk 头单独一行，`\ No newline at end of file` 灰显。
+- **边界都有明确提示**：这一侧没有改动 / 二进制文件没有文本差异 / 差异过大只
+  显示开头一段 / 未跟踪目录里还有 N 个文件未展开 / 读取失败。超过 1500 行的
+  差异先渲染前 1500 行，按钮可展开全部（避免一次渲染几万个节点）。
+- **未跟踪文件**：与空文件对比，显示成 `new file mode` 的新增 diff；未跟踪
+  **目录**会把里面的文件逐个展开（上限 50 个，其余计入提示）。
+- **重命名**：同时把旧名与新名作为 pathspec 交给 git，否则 git 无法配对，会把
+  一次重命名报成整文件新增。
 
 ### 提交区与 AI 起草
 
@@ -51,7 +77,7 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成走注入的 `llm` 服务。 |
+| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`diff`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成走注入的 `llm` 服务。 |
 | 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@dsh-plugins/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
 
 ### 为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）
@@ -106,13 +132,14 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
 
 | 端点 | 参数 | 结果（`value`） |
 | --- | --- | --- |
-| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path}] }` |
+| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path, index, worktree, file, origFile}] }`。`path` 是展示串（重命名读作 `old → new`），`file`/`origFile` 是交给 `diff` 的 pathspec，`index`/`worktree` 是 porcelain-v2 的两个字母。 |
 | `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
 | `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`，经 `git switch --guess`；浏览器会预检脏树并提前警告；因"本地修改会被覆盖"被拒绝时会带上可读前缀。 |
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }`，经 `git switch --create <branch> <base>`（缺省 base 即 HEAD）；从基分支创建新分支并切换过去。 |
 | `fetch` | `{ cwd, remote? }` | `{ message }`（120s 超时） |
 | `pull` | `{ cwd }` | `{ message }`，经 `git pull --ff-only`（绝不隐式合并） |
 | `stage` | `{ cwd }` | `{ message }`，经 `git add --all` |
+| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, truncated}, index: {…} }`。两侧一次读回（`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`）；`path` 必须是仓库内相对路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白），非法时报 `invalid-path`。未跟踪路径用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1），未跟踪目录用 `git ls-files --others --exclude-standard` 展开（上限 50 个，其余计入 `skipped`）。单侧超过 40 万字符在行边界截断并置 `truncated`；二进制置 `binary`。**只读**，不碰 index / 工作区 / 配置。 |
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
 | `push` | `{ cwd }` | `{ message }`（120s 超时） |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
@@ -133,6 +160,16 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
 - **push/pull 凭据**来自系统（Git Credential Manager / SSH agent）；插件
   绝不碰凭据存储。AI 生成同样不接触凭据——API key 由模型适配器自己解析。
 - **插件绝不修改 git config**；缺 author 时给出明确错误而不是悄悄补写。
+- **差异查看是纯只读的**：`diff` 端点只跑 `git diff` / `git ls-files`，不写
+  index、不动工作区、不改配置；它**不依赖**宿主右侧 Sidebar 那套标签页 API
+  （那部分还在快速迭代），而是面板内自带两栏——左侧工作台照旧，右侧差异栏。
+  差异渲染也是自己写的（本 bundle 只依赖 `react`）：解析统一 diff、双行号、
+  `+`/`-` 配色，不引任何语法高亮依赖。
+- **重命名必须同时传旧名与新名**：git 只在旧名也在 pathspec 里时才配对，只给
+  新名会把一次重命名报成整文件新增（`test/diff.mjs` 守护这一点）。
+- **status 的 porcelain-v2 解析**：`2`（rename/copy）记录的路径在第 10 个字段、
+  与旧名以 TAB 分隔，`u`（冲突）记录的路径在第 11 个字段且状态恒为冲突——这
+  两处曾按 `slice(8)` / `slice(9)` 取值而错位，现在由 `changeEntry()` 统一构造。
 - **插件不导入任何 `@deepseek-ai/*` 运行时包**（只用 `node:` 内置模块和
   `@deepseek-ai/cordis`）。以 pnpm `link:` 方式安装时，宿主包无法从插件的真实
   源码路径解析，声明这类导入会让插件在加载期就崩溃；生成所需的请求构造与流
@@ -151,13 +188,18 @@ dsh plugin --profile web remove @dsh-plugins/dsh-git
     上挂载插件行（从 `DSH_HOME` 的 profile 解析 DSH 包，找不到则 SKIP）；
   - `node test/generate.mjs` —— AI 生成单元测试：路由解析、prompt 组装、截断、
     流式拼装（block-end 与纯 delta 两条路径）、终止失败/取消/空输出；
-  - `node test/render.mjs` —— 双界面真实 React SSR 渲染，含提交区三个控件与
+  - `node test/render.mjs` —— 双界面真实 React SSR 渲染，含提交区三个控件、
+    diff 解析器（行号 / 分类 / `--` 开头的删除行）、行渲染、差异面板标题栏与
     `act()` 的结果回传/本地化（需要一份 react/react-dom，可用
     `DSH_GIT_REACT_ROOT` 指定，找不到则 SKIP）。
   - 也提供 `npm test`（依次跑四个）。
   - `npm run test:commit` —— **端到端**：在临时仓库里真起 git，走插件的
     `/dsh-git-rpc/commit` 路由提交，再用 `git log --format=%B` 逐字节比对提交
     信息（多行、CRLF、中文、前导 `-`、shell 元字符等），并确认非法信息被拒且
-    不产生提交。它必须 spawn git 的管道 stdio，故**不在 `npm test` 内**——
-    请在没有该限制的环境（普通终端）单独运行。
+    不产生提交。
+  - `npm run test:diff` —— **端到端**：临时仓库里逐个验证 `diff` 端点：工作区
+    / 已暂存两侧、未跟踪文件与**未跟踪目录**、**重命名配对**、删除、二进制、
+    40 万字符截断、以及路径校验与非仓库目录。
+  - 后两个都必须 spawn git 的管道 stdio，故**不在 `npm test` 内**——请在没有
+    该限制的环境（普通终端）单独运行。
   git 命令集对照运行中的服务端做端到端验证。

@@ -9,7 +9,8 @@ panel rebinds to that repository instantly.
 
 **Workflow supported:** branch switch · fetch · pull (fast-forward only) ·
 stage all · commit (with an AI-drafted message) · push · status · recent
-commits · uncommitted-file list · new-branch-from-base.
+commits · uncommitted-file list · **click a change to see its diff** ·
+new-branch-from-base.
 
 ## UI
 
@@ -29,11 +30,48 @@ commits · uncommitted-file list · new-branch-from-base.
   new branch name + base-branch picker (local branches or full remote refs
   like `origin/feature/x`) — confirming creates the branch from the base and
   switches to it.
+- **Click a change to see its diff**: clicking any row of the change list grows
+  the panel from its 400px single column into two panes — the full workbench on
+  the left, that file's unified diff on the right (see *The diff viewer* below).
+  Clicking the same row again, or the diff header's `×`, folds it back.
 - **Composer dock pill** (`conversation.input.dock`): a compact, left-aligned
   status pill at the textarea's top-left (branch summary or "not a git
   repository"); clicking it toggles the floating panel.
 - Both seats share one store, so they always agree, and both re-bind when the
-  current session (and its cwd) changes.
+  current session (and its cwd) changes. Rebinding clears the selected file —
+  the panel never shows another repository's content.
+
+### The diff viewer
+
+Clicking a row of the change list shows that file's git diff on the right. The
+list is the viewer's navigation: the highlighted row is the file on screen, and
+the first selection expands the list to its full length.
+
+- **Resizable**: the handle is the panel's own right edge — dragging it widens the
+  panel (the workbench keeps its width) and the diff takes the rest, 1:1 with the
+  pointer because the panel anchors its left edge on grab. Double-clicking the
+  edge resets the width, and the panel always stays inside the viewport.
+- **Staged / unstaged**: by default the pane follows the data — unstaged when
+  that side has anything, staged otherwise — with two chips to switch by hand
+  (an empty side is dimmed). When a file has changes on both sides, one click
+  shows the side you care about and the other is one chip away.
+- **Self-refreshing**: staging, committing, switching branches, or refreshing
+  re-reads the open diff; when the unstaged side empties, the pane falls back to
+  the staged side on its own.
+- **Line numbers and colour**: per-side gutters taken from each hunk header,
+  `+`/`-` rows in the theme's success/error colours, hunk headers on their own
+  row, `\ No newline at end of file` dimmed.
+- **Every edge has its own notice**: nothing on this side / a binary file has no
+  text diff / the diff was too large and only its beginning is shown / N more
+  untracked files were not expanded / the read failed. A diff past 1500 rows
+  renders its first 1500 with a button to expand the rest (so a huge patch never
+  becomes tens of thousands of nodes).
+- **Untracked files** are diffed against the empty blob and read as a
+  `new file mode` addition; an untracked **directory** is expanded file by file
+  (capped at 50, the rest counted in that notice).
+- **Renames** hand git both the old and the new path as the pathspec: naming only
+  the new one leaves git unable to pair them and turns a rename into a whole-file
+  addition.
 
 ### The commit area and AI drafting
 
@@ -63,7 +101,7 @@ One dual-face npm package:
 
 | Half | File | Role |
 | --- | --- | --- |
-| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `stage`, `commit`, `push`, `log`, `generateMessage`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. AI drafting goes through the injected `llm` service. |
+| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `stage`, `diff`, `commit`, `push`, `log`, `generateMessage`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. AI drafting goes through the injected `llm` service. |
 | Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@dsh-plugins/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
 
 ### Why the route is self-owned (dsh >= 0.1.5-rc.1)
@@ -127,13 +165,14 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 
 | Endpoint | args | Result (`value`) |
 | --- | --- | --- |
-| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path}] }` |
+| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path, index, worktree, file, origFile}] }`. `path` is the display string (a rename reads `old → new`), `file`/`origFile` are the pathspec `diff` needs, and `index`/`worktree` are the two porcelain-v2 letters. |
 | `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
 | `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }` via `git switch --guess`; the browser pre-checks dirty state and warns before switching; a refusal caused by "local changes would be overwritten" is surfaced with a readable prefix. |
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }` via `git switch --create <branch> <base>` (omitted base = HEAD); creates the branch from the base branch and switches to it. |
 | `fetch` | `{ cwd, remote? }` | `{ message }` (120s timeout) |
 | `pull` | `{ cwd }` | `{ message }` via `git pull --ff-only` (never implicit-merge) |
 | `stage` | `{ cwd }` | `{ message }` via `git add --all` |
+| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, truncated}, index: {…} }`. Both sides are read in one round trip (`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`); `path` must be repository-relative (absolute paths, `..`, a leading `-`, control characters, and surrounding whitespace are rejected with `invalid-path`). An untracked path is diffed with `git diff --no-index -- /dev/null <path>` (exit code 1 tolerated); an untracked directory is expanded with `git ls-files --others --exclude-standard` (capped at 50, the rest counted in `skipped`). A side past 400k characters is truncated at a line boundary and flagged `truncated`; a binary side is flagged `binary`. **Read-only**: it never writes the index, the working tree, or any config. |
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
 | `push` | `{ cwd }` | `{ message }` (120s timeout) |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
@@ -159,6 +198,21 @@ shell metacharacters, and leading dashes are all recorded verbatim.
   touches credentials either — the model adapter resolves its own API key.
 - **The plugin never mutates git config**; missing author reports a clear
   error instead.
+- **The diff viewer is strictly read-only**: its endpoint runs only `git diff` /
+  `git ls-files` — it never writes the index, the working tree, or any config —
+  and it deliberately does **not** depend on the host's right-Sidebar tab API
+  (that surface is still moving fast). The two panes live inside the panel
+  instead, and the diff renderer is written here as well (this bundle depends on
+  `react` only): unified-diff parsing, both line-number gutters, `+`/`-`
+  colours, and no syntax-highlighting dependency.
+- **A rename needs both names in the pathspec**: git only pairs them when the old
+  path is named too; naming the new path alone reports a whole-file addition
+  (`test/diff.mjs` guards this).
+- **porcelain-v2 status parsing**: a `2` (rename/copy) record carries its path in
+  the 10th field with the old name TAB-separated after it, and a `u` (conflict)
+  record carries its path in the 11th field and is always a conflict. Both were
+  read from `slice(8)` / `slice(9)` before — off by the score and hash columns —
+  and are now built by `changeEntry()`.
 - **The plugin imports no `@deepseek-ai/*` runtime package** (only `node:`
   builtins and `@deepseek-ai/cordis`). Under a pnpm `link:` install the host
   packages do not resolve from the plugin's real source path, so such an import
@@ -185,13 +239,20 @@ shell metacharacters, and leading dashes are all recorded verbatim.
     assembly, truncation, stream assembly (both the `block-end` and the
     delta-only path), terminal failure / abort / empty output;
   - `node test/render.mjs` — real React SSR render of both seats, including the
-    three commit-area controls and `act()`'s result plumbing and localization
-    (needs a react/react-dom copy, e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without
-    one).
+    three commit-area controls, the diff parser (line numbers, row kinds, a
+    removed line starting with `--`), the row renderer, the diff pane's header,
+    and `act()`'s result plumbing and localization (needs a react/react-dom copy,
+    e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without one).
 - `npm run test:commit` — **end-to-end**: really spawns git in a throwaway
   repository, commits through the plugin's own `/dsh-git-rpc/commit` route, and
   reads the message back with `git log --format=%B` (multi-line, CRLF, non-ASCII,
   leading `-`, shell metacharacters…), then confirms a rejected message creates
-  no commit. It needs piped child-process stdio, so it is deliberately **not**
-  part of `npm test` — run it from an ordinary terminal.
+  no commit.
+- `npm run test:diff` — **end-to-end**: drives `/dsh-git-rpc/diff` in a throwaway
+  repository through every shape the change list can produce — both sides of the
+  index, an untracked file and an untracked **directory**, **rename pairing**, a
+  deletion, a binary blob, the 400k truncation, path validation, and a directory
+  outside any work tree.
+- The last two need piped child-process stdio, so they are deliberately **not**
+  part of `npm test` — run them from an ordinary terminal.
 - The git command set is verified end-to-end against the running server.

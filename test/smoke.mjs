@@ -156,12 +156,34 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid cwd (rejected before any git spawn) for every endpoint
 {
-  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "commit", "push", "log", "generateMessage"];
+  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "diff", "commit", "push", "log", "generateMessage"];
   for (const ep of endpoints) {
     const res = await call(ep, { cwd: "relative/path" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-cwd") {
       throw new Error(`${ep}: expected invalid-cwd, got ${JSON.stringify(res)}`);
     }
+  }
+}
+
+// diff rejects every path that could escape the work tree or read as an option,
+// and does so before spawning git
+{
+  const evil = ["", "  ", 42, null, undefined, {}, "-flag", "--output=/x", "/etc/passwd", "C:/Windows/win.ini", "../outside.txt", "a/../../b", "./a", "a\u0000b", "a\nb", "x".repeat(4100)];
+  for (const path of evil) {
+    const res = await call("diff", { cwd: "C:/valid/abs", path });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-path") {
+      throw new Error(`evil diff path not rejected: ${JSON.stringify(path)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  const badOrig = await call("diff", { cwd: "C:/valid/abs", path: "src/a.js", origPath: "../x" });
+  if (badOrig.ok || pluginCode(badOrig) !== "invalid-path") {
+    throw new Error(`evil origPath not rejected: ${JSON.stringify(badOrig)}`);
+  }
+  // A usable path dispatches to git instead of failing validation. Whether git
+  // runs here or the sandbox refuses the spawn, the answer is never invalid-path.
+  const dispatched = await call("diff", { cwd: "C:/definitely/not/a/repo", path: "src/a.js" });
+  if (pluginCode(dispatched) === "invalid-path" || pluginCode(dispatched) === "invalid-cwd") {
+    throw new Error(`a valid path must dispatch to git: ${JSON.stringify(dispatched)}`);
   }
 }
 
