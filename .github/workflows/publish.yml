@@ -67,6 +67,9 @@ jobs:
       # 判据用「输出非空」而不是 npm 的退出码：`npm view pkg@不存在的版本` 在不同 npm 版本上
       # 行为不一致（本机 npm 12 报 E404 退出 1，CI 的 npm 11 曾经退出 0 且输出为空），
       # 按退出码判断会**静默跳过**本该执行的发布（0.5.2 第一次 tag 运行就是这么被吞掉的）。
+      # 预检只是省一次上传：**它不可靠**。包刚发布过时 registry/CDN 的 packument 缓存会滞后几分钟，
+      # 这里会看不到刚发出去的版本（0.5.2 的第二次运行就是如此，于是又发了同一版并撞 403）。
+      # 真正的幂等由下面 Publish 步骤兜底：npm 报"版本已存在"就当作成功。
       - name: Check whether this version is already published
         id: published
         run: |
@@ -75,9 +78,9 @@ jobs:
           found="$(npm view "$name@$version" version 2>/dev/null || true)"
           if [ -n "$found" ]; then
             echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo "::notice title=dsh-git publish::skipped — $name@$version is already on the registry"
+            echo "::notice title=dsh-git publish::skipped — $name@$version looks like it is already on the registry"
           else
-            echo "::notice title=dsh-git publish::publishing $name@$version (not on the registry yet)"
+            echo "::notice title=dsh-git publish::attempting $name@$version (registry said it is unknown — may be cache lag)"
           fi
 
       - name: Publish
@@ -92,4 +95,15 @@ jobs:
             auth="trusted publishing (OIDC)"
           fi
           echo "::notice title=dsh-git publish::auth=$auth"
-          npm publish --provenance
+          # 同一个版本重复发布（重指 tag、手动重跑、预检被缓存骗了）不是失败：
+          # 版本既然已经在那里，这一次运行的目标就已经达成。
+          set +e
+          output="$(npm publish --provenance 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -ne 0 ] && printf '%s' "$output" | grep -qi 'cannot publish over the previously published versions'; then
+            echo "::notice title=dsh-git publish::nothing to do — this version is already on the registry"
+            exit 0
+          fi
+          exit "$status"

@@ -188,7 +188,15 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 - **workflow 文件不合法时运行根本不会启动**：Actions 页面只写 `Invalid workflow file: <file>#L1`，
   真实行列在那条注解里（点开看的到），**别去猜认证**。踩过的坑：GitHub Actions 表达式**只认单引号**
   （`startsWith(github.ref, 'refs/tags/')`；写成双引号会让整个文件判定非法），而报错行号指向 L1 只会误导。
+- **发布之后别立刻用 `npm view` 判"到底发没发"**：registry/CDN 的 packument 缓存会滞后几分钟。
+  0.5.2 就被这个坑骗过一轮——第一次 tag 运行其实**已经发布成功**，我 `npm view` 读到的是旧缓存（0.5.1），
+  于是误判成"被幂等跳过"、白改了一次判断逻辑，第二次运行反倒真的重复发布并撞 403。
+  **权威判据是 registry 里的 `gitHead`**（指向发布那次 checkout 的提交），不是`npm view` 的即时输出。
+- 因此 workflow 里那条预检只用来省一次上传，**真正的幂等**是「`npm publish` 报
+  *cannot publish over the previously published versions* 就当作成功」——重指 tag、手动重跑、
+  预检被缓存骗到时都不会变红。
 - 公开仓库的运行页 HTML 里能翻到注解与状态（`octicon-check-circle` / `octicon-x-circle`）；
+  自己加的 `::notice::` 也会显示在注解区，比 `echo` 有用（**步骤日志需要登录才能看**）。
   `api.github.com` 在本机被 Egress 挡住（502）时，这是唯一能读 CI 结果的入口。
 
 ### npm 认证（一次性配置，配置过就不用再管）
