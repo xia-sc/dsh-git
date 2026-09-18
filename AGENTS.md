@@ -168,7 +168,7 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.5.1）。
+1. 改 `package.json` 的版本号（当前 0.5.2）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
