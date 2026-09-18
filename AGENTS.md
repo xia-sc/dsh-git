@@ -151,12 +151,11 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   `DSH_GIT_UI_LIVE=1` 才打真端点；`DSH_GIT_UI_WORKSPACE` 选工作区，`DSH_GIT_UI_URL`/`DSH_GIT_UI_STORAGE_STATE` 过认证。
 - 测 git 行为要**真起 git**：临时仓库、`core.autocrlf=false`、`mkdtemp` + `finally rm`。重命名这类事只有真 git
   能暴露（只给新路径的 pathspec 会退化成整文件新增），别用 mock 假装。
-- **门禁只能在 Windows 上跑**：`test/smoke.mjs` 把 `C:/valid/abs` 当绝对路径用（Linux 上 `path.isAbsolute`
-  为 false，插件会回 `invalid-cwd`，而断言要的是 `invalid-path`、并且明确不许是 `invalid-cwd`），
-  `test/ui/*.mjs` 也硬编码了 Windows 的 Chrome 路径。所以 `.github/workflows/publish.yml` 用
-  `windows-latest` + `shell: bash`，**别改成 ubuntu**——改了 CI 会红在门禁那一步，而表现得很像"发布认证
-  失败"，极易误判（0.5.1 的头两次 tag 运行就是这么红的）。想搬回 Linux 得先把 smoke 里那些绝对路径换成
-  `join(tmpdir(), …)` 这类跨平台写法。
+- **门禁是跨平台的，CI 跑 `ubuntu-latest`**：`test/smoke.mjs` 里的 `cwd` 一律用 `join(tmpdir(), …)` 造绝对路径
+  ——`cwd` 是用 `path.isAbsolute` 校验的，写成 `C:/valid/abs` 只有 Windows 认，换到 Linux 会得到 `invalid-cwd`
+  而断言要的是别的东西。反向那条可以留：`normalizedPath` 里有 `^[A-Za-z]:`，所以 evil list 里的
+  `C:/Windows/win.ini` 在两种系统都会被拒。**`test/ui/*.mjs` 仍然只能在 Windows 手动跑**（硬编码了本机
+  Chrome 路径），但它们不在门禁内。
 
 ## 6. 本地验证清单
 

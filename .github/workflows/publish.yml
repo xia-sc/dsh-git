@@ -17,7 +17,8 @@
 #
 # 这个包没有构建步骤（浏览器半就是手写产物，见 AGENTS.md §3.1）：CI 不装依赖、
 # 不打包，只跑门禁再发布；`--access public` 由 package.json 的 publishConfig 决定。
-# 跑在 windows-latest 上：门禁是 Windows 口味的（`C:/…` 当绝对路径），Linux 过不了。
+# 跑在 ubuntu-latest 上：门禁是跨平台的（smoke 用 `join(tmpdir(), …)` 造绝对路径，
+# 见 AGENTS.md §5）。`test/ui/*.mjs` 只能在 Windows 手动跑，但它们不在门禁里。
 # 私有仓库发不出 provenance，那种情况请去掉 `--provenance`。
 name: publish
 
@@ -34,15 +35,7 @@ permissions:
 
 jobs:
   publish:
-    # 门禁是 Windows 口味的：test/smoke.mjs 拿 "C:/valid/abs" 当绝对路径用
-    # （Linux 上 `path.isAbsolute` 为 false，插件会回 invalid-cwd，而断言要的是
-    # invalid-path / 明确不许是 invalid-cwd），test/ui/*.mjs 也硬编码了 Windows 的
-    # Chrome 路径。所以跑 windows-latest，而不是 ubuntu-latest。
-    runs-on: windows-latest
-    defaults:
-      run:
-        # 下面几步写的是 bash；Git Bash 在 windows-latest 上可用。
-        shell: bash
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 

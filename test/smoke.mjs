@@ -5,7 +5,17 @@
 // not spawn git: route wiring + Connection RPC envelope, endpoint dispatch,
 // argument validation, and the client bundle structure.
 import { EventEmitter } from "node:events";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { apply, inject } from "../lib/index.js";
+
+// `cwd` is validated with `path.isAbsolute`, so a "C:/…" literal is only
+// absolute on Windows: on a Linux runner the plugin answers invalid-cwd and
+// every case below would be asserting the wrong thing. Use a real absolute
+// path for the host that runs the suite — that is what lets the gate run on
+// ubuntu-latest as well as on Windows.
+const ABS_CWD = join(tmpdir(), "dsh-git-smoke-abs");
+const NO_REPO_CWD = join(tmpdir(), "dsh-git-smoke-no-repo");
 
 if (!Array.isArray(inject) || !inject.includes("webServer") || !inject.includes("connection") || !inject.includes("llm")) {
   throw new Error(`host inject must declare webServer + connection + llm: ${JSON.stringify(inject)}`);
@@ -170,18 +180,18 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 {
   const evil = ["", "  ", 42, null, undefined, {}, "-flag", "--output=/x", "/etc/passwd", "C:/Windows/win.ini", "../outside.txt", "a/../../b", "./a", "a\u0000b", "a\nb", "x".repeat(4100)];
   for (const path of evil) {
-    const res = await call("diff", { cwd: "C:/valid/abs", path });
+    const res = await call("diff", { cwd: ABS_CWD, path });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-path") {
       throw new Error(`evil diff path not rejected: ${JSON.stringify(path)} -> ${JSON.stringify(res)}`);
     }
   }
-  const badOrig = await call("diff", { cwd: "C:/valid/abs", path: "src/a.js", origPath: "../x" });
+  const badOrig = await call("diff", { cwd: ABS_CWD, path: "src/a.js", origPath: "../x" });
   if (badOrig.ok || pluginCode(badOrig) !== "invalid-path") {
     throw new Error(`evil origPath not rejected: ${JSON.stringify(badOrig)}`);
   }
   // A usable path dispatches to git instead of failing validation. Whether git
   // runs here or the sandbox refuses the spawn, the answer is never invalid-path.
-  const dispatched = await call("diff", { cwd: "C:/definitely/not/a/repo", path: "src/a.js" });
+  const dispatched = await call("diff", { cwd: NO_REPO_CWD, path: "src/a.js" });
   if (pluginCode(dispatched) === "invalid-path" || pluginCode(dispatched) === "invalid-cwd") {
     throw new Error(`a valid path must dispatch to git: ${JSON.stringify(dispatched)}`);
   }
@@ -190,14 +200,14 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 // generateMessage validates its mode before reading any diff or calling a model
 {
   for (const mode of ["everything", "STAGED", "", 42, {}]) {
-    const res = await call("generateMessage", { cwd: "C:/valid/abs", mode });
+    const res = await call("generateMessage", { cwd: ABS_CWD, mode });
     if (res.ok || pluginCode(res) !== "invalid-mode") {
       throw new Error(`bad mode not rejected: ${JSON.stringify(mode)} -> ${JSON.stringify(res)}`);
     }
   }
   // An absent mode is valid (it defaults), so it must reach the git read and
   // fail there rather than on validation.
-  const res = await call("generateMessage", { cwd: "C:/definitely/not/a/repo" });
+  const res = await call("generateMessage", { cwd: NO_REPO_CWD });
   if (pluginCode(res) === "invalid-mode" || pluginCode(res) === "invalid-cwd") {
     throw new Error(`absent mode must default, not reject: ${JSON.stringify(res)}`);
   }
@@ -223,7 +233,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 {
   const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b"];
   for (const name of evil) {
-    const res = await call("checkout", { cwd: "C:/valid/abs", branch: name });
+    const res = await call("checkout", { cwd: ABS_CWD, branch: name });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
       throw new Error(`evil branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
     }
@@ -234,20 +244,20 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 {
   const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b"];
   for (const name of evil) {
-    const res = await call("createBranch", { cwd: "C:/valid/abs", branch: name, base: "main" });
+    const res = await call("createBranch", { cwd: ABS_CWD, branch: name, base: "main" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
       throw new Error(`evil new-branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
     }
   }
   for (const base of evil) {
-    const res = await call("createBranch", { cwd: "C:/valid/abs", branch: "good-name", base });
+    const res = await call("createBranch", { cwd: ABS_CWD, branch: "good-name", base });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
       throw new Error(`evil base not rejected: ${JSON.stringify(base)} -> ${JSON.stringify(res)}`);
     }
   }
   // HEAD (any case) is not a valid new branch name
   for (const name of ["HEAD", "head", "Head"]) {
-    const res = await call("createBranch", { cwd: "C:/valid/abs", branch: name, base: "main" });
+    const res = await call("createBranch", { cwd: ABS_CWD, branch: name, base: "main" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
       throw new Error(`HEAD new-branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
     }
@@ -255,7 +265,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   // Omitted base means HEAD: valid input, so it dispatches to git (which
   // fails here with not-a-repo or git-error — either is fine, but not
   // invalid-branch / invalid-cwd).
-  const res = await call("createBranch", { cwd: "C:/definitely/not/a/repo", branch: "good-name" });
+  const res = await call("createBranch", { cwd: NO_REPO_CWD, branch: "good-name" });
   if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
     throw new Error(`createBranch without base should dispatch to git: ${JSON.stringify(res)}`);
   }
@@ -264,7 +274,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 // invalid remote names
 {
   for (const remote of ["", "a b", "-x", "a/b", "a..b", "x".repeat(200), 42, null]) {
-    const res = await call("fetch", { cwd: "C:/valid/abs", remote });
+    const res = await call("fetch", { cwd: ABS_CWD, remote });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-remote") {
       throw new Error(`evil remote not rejected: ${JSON.stringify(remote)} -> ${JSON.stringify(res)}`);
     }
@@ -274,7 +284,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   // above; just assert a valid absolute cwd with no remote dispatches to git
   // (which will fail with not-a-repo or git-error — either is fine, but not
   // invalid-remote).
-  const res = await call("fetch", { cwd: "C:/definitely/not/a/repo" });
+  const res = await call("fetch", { cwd: NO_REPO_CWD });
   if (res.ok || pluginCode(res) === "invalid-remote") throw new Error(`fetch without remote should not be invalid-remote: ${JSON.stringify(res)}`);
 }
 
@@ -283,7 +293,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 {
   const evil = ["", "   ", "\n\n", "a\u0000b", "a\u000bb", "a\u007fb", "a\u001bb", "x".repeat(10001), 42, null, undefined, {}];
   for (const msg of evil) {
-    const res = await call("commit", { cwd: "C:/valid/abs", message: msg });
+    const res = await call("commit", { cwd: ABS_CWD, message: msg });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-message") {
       throw new Error(`evil message not rejected: ${JSON.stringify(msg)} -> ${JSON.stringify(res)}`);
     }
