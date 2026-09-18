@@ -184,6 +184,14 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 7. npm 与 GitHub 两个渠道同源，版本号必须一致——所以 tag 名（去掉 `v`）要和 `package.json` 相同，
    这也是 workflow 第一步校验的东西。
 
+### CI 排错
+
+- **workflow 文件不合法时运行根本不会启动**：Actions 页面只写 `Invalid workflow file: <file>#L1`，
+  真实行列在那条注解里（点开看的到），**别去猜认证**。踩过的坑：GitHub Actions 表达式**只认单引号**
+  （`startsWith(github.ref, 'refs/tags/')`；写成双引号会让整个文件判定非法），而报错行号指向 L1 只会误导。
+- 公开仓库的运行页 HTML 里能翻到注解与状态（`octicon-check-circle` / `octicon-x-circle`）；
+  `api.github.com` 在本机被 Egress 挡住（502）时，这是唯一能读 CI 结果的入口。
+
 ### npm 认证（一次性配置，配置过就不用再管）
 
 - **首包只能在本机交互式发布**：trusted publisher 要求包已经存在（对不存在的包 `npm trust` 会

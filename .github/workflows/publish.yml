@@ -52,8 +52,10 @@ jobs:
           node-version: 24
 
       # 打错 tag 会发错版本，这里先拦住。
+      # 注意：GitHub Actions 表达式只认单引号——写成 "refs/tags/" 会让整个 workflow
+      # 文件被判非法（Invalid workflow file），运行根本不会启动。
       - name: Check the tag against package.json
-        if: startsWith(github.ref, "refs/tags/")
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           tag="${GITHUB_REF_NAME#v}"
           version="$(node -p "require('./package.json').version")"
