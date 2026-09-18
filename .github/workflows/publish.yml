@@ -64,14 +64,20 @@ jobs:
 
       # 这个版本已经在 registry 上就不发了（本机补发过一次，或者手动重跑 workflow），
       # 免得同一次 tag 撞 "cannot publish over existing version" 变成红灯。
+      # 判据用「输出非空」而不是 npm 的退出码：`npm view pkg@不存在的版本` 在不同 npm 版本上
+      # 行为不一致（本机 npm 12 报 E404 退出 1，CI 的 npm 11 曾经退出 0 且输出为空），
+      # 按退出码判断会**静默跳过**本该执行的发布（0.5.2 第一次 tag 运行就是这么被吞掉的）。
       - name: Check whether this version is already published
         id: published
         run: |
           name="$(node -p "require('./package.json').name")"
           version="$(node -p "require('./package.json').version")"
-          if npm view "$name@$version" version >/dev/null 2>&1; then
+          found="$(npm view "$name@$version" version 2>/dev/null || true)"
+          if [ -n "$found" ]; then
             echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo "$name@$version is already on the registry; nothing to publish."
+            echo "::notice title=dsh-git publish::skipped — $name@$version is already on the registry"
+          else
+            echo "::notice title=dsh-git publish::publishing $name@$version (not on the registry yet)"
           fi
 
       - name: Publish
@@ -81,8 +87,9 @@ jobs:
         run: |
           if [ -n "$NPM_TOKEN" ]; then
             echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> "$HOME/.npmrc"
-            echo "auth: NPM_TOKEN secret"
+            auth="NPM_TOKEN secret"
           else
-            echo "auth: npm trusted publishing (OIDC)"
+            auth="trusted publishing (OIDC)"
           fi
+          echo "::notice title=dsh-git publish::auth=$auth"
           npm publish --provenance
