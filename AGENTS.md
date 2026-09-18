@@ -180,19 +180,27 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 
 ### npm 认证（一次性配置，配置过就不用再管）
 
-- 推荐 **trusted publishing**（没有长期密钥可泄露），本机跑一次：
+- **首包只能在本机交互式发布**：trusted publisher 要求包已经存在（对不存在的包 `npm trust` 会
+  回 `E404 Package not found`；`--dry-run` 只在本地校验、不打服务端，别被它骗过），而
+  `npm publish` 是 2FA 操作，非交互式 shell 里会 `EOTP`。所以在自己的终端跑一次：
+
+  ```sh
+  npm publish          # 在仓库根目录；prepublishOnly 会先跑门禁，2FA 走浏览器/OTP
+  ```
+
+- 包存在之后再登记 **trusted publishing**（之后的 tag 全交给 CI，用 OIDC 换一次性凭据，
+  带 provenance，既不需要本机发布也不需要长期密钥）：
 
   ```sh
   npm trust github @xia-sc/dsh-git --file publish.yml --repo xia-sc/dsh-git --allow-publish
   ```
 
-  `npm trust` 需要 npm ≥ 11.5.1，`--allow-publish` 少了就不许发布；它是 **2FA 操作**（会走一次浏览器授权，
-  非交互式 shell 里会 `EOTP`），所以要在交互式终端跑。**实测包还不存在时也能登记**，因此首次发布就能走 OIDC，
-  不必先手动发一次。
-- 备用：仓库 Settings → Secrets 里配 `NPM_TOKEN`（有发布权限的 **granular** token；classic token 已被 npm
-  吊销）。workflow 里有这个 secret 就用它，没有就落到 OIDC。
-- workflow 是**幂等**的：`package.json` 里那个版本已经在 registry 上就跳过发布，所以本机先手动发过一次、
-  或者手动重跑一次 workflow，都不会变成红灯。
+  `npm trust` 需要 npm ≥ 11.5.1，`--allow-publish` 少了就不许发布；同样是 2FA 操作。
+- 备用：仓库 Settings → Secrets 里配 `NPM_TOKEN`（有发布权限的 **granular** token；classic token
+  已被 npm 吊销）。workflow 里有这个 secret 就用它，没有就落到 OIDC；但 npm 正在收紧"绕过 2FA
+  的 token 直接发布"，长期解只有 OIDC。
+- workflow 是**幂等**的：`package.json` 里那个版本已经在 registry 上就跳过发布——所以本机先发过
+  0.5.1 之后再推 `v0.5.1` tag，那次运行是绿的（只跑门禁，不重复发）。
 - 私有仓库发不出 provenance：那种情况把 workflow 里的 `--provenance` 去掉。
 
 ## 8. 这个环境（Windows / DSH 会话沙箱）的坑

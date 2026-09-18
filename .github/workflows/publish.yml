@@ -7,11 +7,13 @@
 #
 #        npm trust github @xia-sc/dsh-git --file publish.yml --repo xia-sc/dsh-git --allow-publish
 #
-#      （`npm trust` 需要 npm >= 11.5.1，且是 2FA 操作——会在浏览器里过一次授权；
-#       实测**包还不存在时也能登记**，所以首次发布就能走 OIDC，不必先手动发一次。）
+#      （`npm trust` 需要 npm >= 11.5.1，是 2FA 操作；**而且要求包已经存在**——对不存在的包
+#       服务端会回 E404 Package not found。所以首包必须先在本机交互式 `npm publish` 一次，
+#       之后 tag 就全交给 CI。`--dry-run` 只在本地校验、不打服务端，别用它判断能否登记。）
 #
 #   2. Repository secret `NPM_TOKEN`：一个有发布权限的 granular access token。
-#      classic token 已被 npm 吊销，别再用；没有这个 secret 时自动落到 OIDC。
+#      classic token 已被 npm 吊销；npm 也在收紧"绕过 2FA 的 token 直接发布"，长期解是 OIDC。
+#      没有这个 secret 时自动落到 OIDC。
 #
 # 这个包没有构建步骤（浏览器半就是手写产物，见 AGENTS.md §3.1）：CI 不装依赖、
 # 不打包，只跑门禁再发布；`--access public` 由 package.json 的 publishConfig 决定。
