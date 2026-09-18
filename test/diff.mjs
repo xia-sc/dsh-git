@@ -1,4 +1,4 @@
-// End-to-end diff test for @dsh-plugins/dsh-git (run: node test/diff.mjs).
+// End-to-end diff test for @xia-sc/dsh-git (run: node test/diff.mjs).
 //
 // Unlike test/smoke.mjs, this file really spawns git: it drives the plugin's own
 // `/dsh-git-rpc/diff` route against a throwaway repository and asserts what the

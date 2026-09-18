@@ -152,29 +152,51 @@ if (!store || typeof store.subscribe !== "function" || typeof store.getSnapshot 
 
 const repoSummary = {
   cwd: "C:/repo",
+  retainedBy: { mainView: 1 },
   projectionValues: { modelSelection: { lastUsed: null, next: { provider: "alpha", model: "alpha-large" } } }
 };
 const commonProps = {
   store,
   t: (key, params) => key + (params ? JSON.stringify(params) : ""),
-  useSessions: () => ({ current: "s1", byId: { s1: repoSummary } })
+  // The session-scoped seat's own props: dsh >= 0.1.6 hands the current
+  // Session identity to the dock (the panel reads the store instead), and the
+  // summary's retain counts are the "is this the main-view Session?" signal.
+  sessionId: "s1",
+  useSessions: () => ({ ids: ["s1"], byId: { s1: repoSummary } })
 };
 
-// Panel: initial render with no session (current undefined) → renders null.
+// Unbound store (no session yet): neither seat renders anything.
 {
-  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, {
-    ...commonProps,
-    useSessions: () => ({ current: undefined, byId: {} })
-  }));
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
   if (html !== "") throw new Error(`no-session panel should render nothing, got: ${html}`);
+  const dockHtml = renderToStaticMarkup(React.createElement(bySlot["conversation.input.dock"].comp, commonProps));
+  if (dockHtml !== "") throw new Error(`no-session dock should render nothing, got: ${dockHtml}`);
 }
 
-// Panel: with a session but store idle/collapsed → renders nothing (no
-// floating bubble; the persistent status is the input.left pill).
+// The dock owns the store's session binding. SSR runs no effects, so the test
+// performs the binding the pill would do in the browser.
+await store.bindSession("s1", "C:/repo");
+if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must publish the session identity");
+
+// Panel: bound session, but store idle/collapsed → renders nothing (no
+// floating bubble; the persistent status is the input pill).
 {
   const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
   console.log("panel collapsed render:", JSON.stringify(html.slice(0, 120)));
   if (html !== "") throw new Error(`collapsed panel should render nothing, got: ${html}`);
+}
+
+// An embedded Conversation (a right-sidebar chat tab) must not show the main
+// workbench's pill, and must not rebind the shared store.
+{
+  const embeddedSummary = { cwd: "C:/other", retainedBy: { gateway: 1 } };
+  const html = renderToStaticMarkup(React.createElement(bySlot["conversation.input.dock"].comp, {
+    ...commonProps,
+    sessionId: "s2",
+    useSessions: () => ({ ids: ["s1", "s2"], byId: { s1: repoSummary, s2: embeddedSummary } })
+  }));
+  if (html !== "") throw new Error(`embedded dock should render nothing, got: ${html}`);
+  if (store.getSnapshot().sessionId !== "s1") throw new Error("an embedded seat must not rebind the store");
 }
 
 // Dock: initial render with a session → dock line (or null while rebinding).

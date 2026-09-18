@@ -1,0 +1,82 @@
+# 发布到 npm：推一个与 package.json 版本一致的 vX.Y.Z tag 即自动发布。
+#
+# 认证有两条路，任选其一即可；两条都配好时以 NPM_TOKEN 优先：
+#
+#   1. Trusted publishing（推荐，没有长期密钥）：把本仓库登记成该包的 trusted
+#      publisher，之后 CI 用 OIDC 换一次性凭据发布，仓库里什么都不用存：
+#
+#        npm trust github @xia-sc/dsh-git --file publish.yml --repo xia-sc/dsh-git --allow-publish
+#
+#      （`npm trust` 需要 npm >= 11.5.1，且是 2FA 操作——会在浏览器里过一次授权；
+#       实测**包还不存在时也能登记**，所以首次发布就能走 OIDC，不必先手动发一次。）
+#
+#   2. Repository secret `NPM_TOKEN`：一个有发布权限的 granular access token。
+#      classic token 已被 npm 吊销，别再用；没有这个 secret 时自动落到 OIDC。
+#
+# 这个包没有构建步骤（浏览器半就是手写产物，见 AGENTS.md §3.1）：CI 不装依赖、
+# 不打包，只跑门禁再发布；`--access public` 由 package.json 的 publishConfig 决定。
+# 私有仓库发不出 provenance，那种情况请去掉 `--provenance`。
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  # 手动补发：tag 已存在但上一次发布失败时用；版本已在 registry 上会自动跳过。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # OIDC：trusted publishing 与 provenance 都要它。
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 24 自带 npm 11；trusted publishing 要求 npm >= 11.5.1。
+          node-version: 24
+
+      # 打错 tag 会发错版本，这里先拦住。
+      - name: Check the tag against package.json
+        if: startsWith(github.ref, "refs/tags/")
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json $version"
+            exit 1
+          fi
+
+      # 唯一的门禁（AGENTS.md §2）。不需要 npm install：四个套件只用 node 内置模块，
+      # 缺 profile / react 的两个会自己 SKIP。
+      - name: Run the gate
+        run: npm test
+
+      # 这个版本已经在 registry 上就不发了（本机补发过一次，或者手动重跑 workflow），
+      # 免得同一次 tag 撞 "cannot publish over existing version" 变成红灯。
+      - name: Check whether this version is already published
+        id: published
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "$name@$version is already on the registry; nothing to publish."
+          fi
+
+      - name: Publish
+        if: steps.published.outputs.skip != '1'
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" >> "$HOME/.npmrc"
+            echo "auth: NPM_TOKEN secret"
+          else
+            echo "auth: npm trusted publishing (OIDC)"
+          fi
+          npm publish --provenance

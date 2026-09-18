@@ -1,4 +1,4 @@
-// End-to-end commit test for @dsh-plugins/dsh-git (run: node test/commit.mjs).
+// End-to-end commit test for @xia-sc/dsh-git (run: node test/commit.mjs).
 //
 // Unlike test/smoke.mjs, this file really spawns git: it drives the plugin's
 // own `/dsh-git-rpc/commit` route against a throwaway repository and reads the

@@ -1,4 +1,4 @@
-// UI verification for @dsh-plugins/dsh-git using system Chrome + playwright-core.
+// UI verification for @xia-sc/dsh-git using system Chrome + playwright-core.
 // Opens http://127.0.0.1:3080, waits for the shell, inspects the boot graph
 // and the [data-dsh-git] seats, screenshots the panel, and prints findings.
 // Usage: node verify-ui.mjs <screenshot-dir>
@@ -33,7 +33,7 @@ const boot = await page.evaluate(() => {
 });
 console.log("boot:", JSON.stringify(boot, null, 1));
 if (!boot) throw new Error("no __DSH_BOOT__ on page");
-const gitEntry = boot.entries.find((id) => id === "@dsh-plugins/dsh-git");
+const gitEntry = boot.entries.find((id) => id === "@xia-sc/dsh-git");
 console.log("dsh-git in boot:", !!gitEntry);
 
 // 2) wait for any data-dsh-git seat to appear (badge or dock)

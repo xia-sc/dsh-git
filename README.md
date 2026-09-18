@@ -1,4 +1,4 @@
-# @dsh-plugins/dsh-git
+# @xia-sc/dsh-git
 
 [English](./README.en.md) | 中文
 
@@ -78,7 +78,7 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
 | 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`diff`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成走注入的 `llm` 服务。 |
-| 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@dsh-plugins/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
+| 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@xia-sc/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
 
 ### 为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）
 
@@ -93,7 +93,27 @@ dsh 0.1.5-rc.1 起，外部插件不能再调用 `ctx.connection.rpc.handle()`�
 `requestRejection`，安全等级与 `/api` 完全一致。`test/host-mount.mjs` 在真实 Cordis +
 真实 Connection 服务上守护这一点。
 
+### 会话绑定由会话座位提供（dsh ≥ 0.1.6-alpha.2）
+
+两个界面此前都从 sessions 列表快照里读 `current`（当前会话 id）。0.1.6-alpha.2 把这个
+字段去掉了——列表快照只剩 `ids` / `byId` / `phase` / `subagentsByParent` /
+`jobsBySession`，当前会话改由渲染器的作用域适配器（`SlotScopeAdapter.current`，由
+`retainedBy.mainView` 推出）投递给**会话作用域**的座位，根作用域的 `shell.overlay`
+读不到它（症状是胶囊和面板一起静默消失，没有任何报错）。
+
+现在：**胶囊**（`conversation.input.dock`，会话作用域，框架直接给出 `sessionId`）
+从 `useSessions` 快照里取该会话的 `cwd`，调用 `store.bindSession(sessionId, cwd)`；
+**面板**只读共享 store 的 `sessionId` / `cwd`（它另外用 `sessionId` 取
+`modelSelection` 投影来定 AI 起草的路由）。`byId[id].retainedBy.mainView` 用来排除
+右栏里的嵌入式会话（子会话 chat），快照不带这个计数时按主视图放行。
+
 ## 安装
+
+```sh
+dsh plugin --profile web add @xia-sc/dsh-git
+```
+
+也可以直接从源码装（两个渠道同源，npm 上的版本就是对应 tag 的产物）：
 
 ```sh
 dsh plugin --profile web add https://github.com/xia-sc/dsh-git
@@ -107,7 +127,7 @@ dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 卸载：
 
 ```sh
-dsh plugin --profile web remove @dsh-plugins/dsh-git
+dsh plugin --profile web remove @xia-sc/dsh-git
 ```
 
 ## RPC 约定（`/dsh-git-rpc`）

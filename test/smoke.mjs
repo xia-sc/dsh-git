@@ -1,4 +1,4 @@
-// Smoke test for @dsh-plugins/dsh-git (run: node test/smoke.mjs)
+// Smoke test for @xia-sc/dsh-git (run: node test/smoke.mjs)
 // NOTE: this process runs under the session sandbox, where spawning git with
 // piped stdio is blocked (EPERM). The git *command set* is verified separately
 // against the live server / via pwsh; this file covers everything that does
@@ -296,7 +296,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   globalThis.window = windowStub;
   await import("../lib/client.js");
   const handoff = globalThis.__handoff;
-  if (!handoff || handoff.id !== "@dsh-plugins/dsh-git") throw new Error("client bundle did not self-register");
+  if (!handoff || handoff.id !== "@xia-sc/dsh-git") throw new Error("client bundle did not self-register");
   const mod = handoff.factory((spec) => {
     if (spec === "react") return { createElement() {}, useState() { return [undefined, () => {}]; }, useEffect() {}, useSyncExternalStore() { return undefined; } };
     throw new Error(`unexpected require: ${spec}`);

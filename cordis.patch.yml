@@ -1,4 +1,4 @@
-# @dsh-plugins/dsh-git — browser-surface bundle layer.
+# @xia-sc/dsh-git — browser-surface bundle layer.
 #
 # Applied after the dsh-web-app layer, so the `connection` service (the host
 # half of the web transport) is already available. The host half of this
@@ -12,4 +12,4 @@
 # it in the row would only create a second place to keep in sync.
 - insert:
     - id: dsh-git
-      name: '@dsh-plugins/dsh-git'
+      name: '@xia-sc/dsh-git'

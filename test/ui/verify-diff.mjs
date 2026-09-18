@@ -173,6 +173,11 @@ try {
 
   const changeRow = page.locator('[data-dsh-git="change-row"]').first();
   check("the change list offers clickable rows", (await page.locator('[data-dsh-git="change-row"]').count()) > 0);
+  // The row renders its status label and the file's display path on separate
+  // lines; the header below must name THAT file. Reading it off the row keeps
+  // the check honest whatever the working tree happens to contain (the diff
+  // body itself is a fixture).
+  const clickedFile = await changeRow.evaluate((el) => (el.innerText ?? "").trim().split("\n").pop().trim());
   await changeRow.click();
   await page.waitForTimeout(live ? 1500 : 700);
 
@@ -190,7 +195,7 @@ try {
     check("removed rows are counted and marked", parsed.del >= 2, String(parsed.del));
     check("a removed line starting with `--` is a change, not a header", parsed.hasRemovedDashDash === true);
     check("the no-newline marker survives", parsed.noNewline === 1, String(parsed.noNewline));
-    check("the header names the file", parsed.header.includes("README.md"), parsed.header);
+    check("the header names the file that was clicked", parsed.header.includes(clickedFile), `${JSON.stringify(clickedFile)} vs ${parsed.header}`);
     check("the header shows +/- counts", /[+]\d+ [−-]\d+/.test(parsed.header), parsed.header);
   }
 
@@ -206,10 +211,14 @@ try {
   // Wrapping is a real layout switch: the row must stop being as wide as its
   // longest line, or `pre-wrap` never fires and the pane just scrolls sideways.
   {
+    // The row to measure is the one with the LONGEST text, not the first add
+    // row: which add is long is a property of the fixture, and the first one
+    // usually fits on a single line at the default pane width.
     const overflow = () => page.evaluate(() => {
       const body = document.querySelector('[data-dsh-git="diff-body"]');
-      const add = document.querySelector('[data-dsh-git="diff-row"][data-kind="add"]');
-      return { overflowX: body.scrollWidth - body.clientWidth, rowHeight: Math.round(add.getBoundingClientRect().height) };
+      const adds = Array.from(document.querySelectorAll('[data-dsh-git="diff-row"][data-kind="add"]'));
+      const longest = adds.reduce((best, row) => (best === null || (row.textContent ?? "").length > (best.textContent ?? "").length ? row : best), null);
+      return { overflowX: body.scrollWidth - body.clientWidth, rowHeight: longest === null ? 0 : Math.round(longest.getBoundingClientRect().height) };
     });
     const unwrapped = await overflow();
     check("an unwrapped long line scrolls sideways", unwrapped.overflowX > 0, JSON.stringify(unwrapped));

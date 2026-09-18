@@ -1,4 +1,4 @@
-# @dsh-plugins/dsh-git
+# @xia-sc/dsh-git
 
 [中文](./README.md) | English
 
@@ -102,7 +102,7 @@ One dual-face npm package:
 | Half | File | Role |
 | --- | --- | --- |
 | Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `stage`, `diff`, `commit`, `push`, `log`, `generateMessage`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. AI drafting goes through the injected `llm` service. |
-| Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@dsh-plugins/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
+| Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@xia-sc/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
 
 ### Why the route is self-owned (dsh >= 0.1.5-rc.1)
 
@@ -119,7 +119,33 @@ connection service's `requestRejection`, so the channel is exactly as trusted
 as `/api`. `test/host-mount.mjs` guards this against a real Cordis host and the
 real Connection service.
 
+### The session binding belongs to the session-scoped seat (dsh >= 0.1.6-alpha.2)
+
+Both faces used to read `current` (the current session id) out of the sessions
+list snapshot. 0.1.6-alpha.2 dropped that field — the snapshot is now `ids` /
+`byId` / `phase` / `subagentsByParent` / `jobsBySession`, and the current
+session reaches **session-scoped** seats through the renderer's scope adapter
+(`SlotScopeAdapter.current`, derived from `retainedBy.mainView`), which a
+root-scoped `shell.overlay` entry cannot read (the symptom is the pill and the
+panel silently disappearing, with no error anywhere).
+
+Now the **pill** (`conversation.input.dock`, session-scoped: the framework hands
+it `sessionId`) reads that session's `cwd` from the `useSessions` snapshot and
+calls `store.bindSession(sessionId, cwd)`; the **panel** only reads the shared
+store's `sessionId` / `cwd` (it also uses the identity to resolve the
+`modelSelection` projection behind the AI draft route). `byId[id].retainedBy.mainView`
+keeps an embedded Conversation (a subagent chat tab) from taking the workbench
+over; a snapshot without that count is treated as main-view so the pill never
+vanishes for want of it.
+
 ## Install
+
+```sh
+dsh plugin --profile web add @xia-sc/dsh-git
+```
+
+Or install straight from the source (both channels are the same code: the npm
+version is the artifact of the matching tag):
 
 ```sh
 dsh plugin --profile web add https://github.com/xia-sc/dsh-git
@@ -135,7 +161,7 @@ the architecture note above).
 Uninstall:
 
 ```sh
-dsh plugin --profile web remove @dsh-plugins/dsh-git
+dsh plugin --profile web remove @xia-sc/dsh-git
 ```
 
 ## RPC contract (`/dsh-git-rpc`)
