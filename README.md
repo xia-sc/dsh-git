@@ -18,7 +18,10 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   "仍要切换"按钮；fetch/pull 操作；**提交区**——"暂存全部"按钮、AI 生成依据
   选择器、"✨ AI 生成"按钮、提交信息输入框（多行文本框，回车换行、
   Ctrl/Cmd+Enter 提交）与提交按钮；可折叠的变更列表与
-  最近提交列表；上次操作输出）。面板**可通过顶栏拖动**（按住带 Git 标题的
+  最近提交列表）。**操作反馈固定钉在面板最上边，而且只有一行**——"推送中…"和上次操作的结果都在
+  body 的第一行；结果是一个中文短句（"已推送"／"已暂存全部"／"已切换到 xxx"），git 自己的输出
+  （push 的 sideband banner、`LF will be replaced by CRLF` 这类提示）收在右侧的"详情 ▾"里，点开才展开，
+  不会被变更列表和最近提交顶到看不见的地方。面板**可通过顶栏拖动**（按住带 Git 标题的
   那一行，拖到哪里就停在哪里，不会拖出视口；顶栏上的按钮/输入框不会触发
   拖动；双击顶栏回到居中位置）。
   分支切换器旁边的"＋ 新建分支"按钮会展开一个内联表单：新分支名 + 基分支
@@ -31,6 +34,10 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   状态胶囊（分支摘要，或"当前工作区不是 Git 仓库"）；点击它展开/收起悬浮面板。
 - 两处界面共享同一个 store，状态永远一致，并都会随当前会话（及其 cwd）
   切换而重新绑定。切换工作区会清空已选中的文件——绝不让面板显示别的仓库的内容。
+- **git 的文字输出会剥掉 ANSI 颜色码**：远端会给自己的 banner 上色（gitee 的
+  `Powered by GITEE.COM` 就是），面板是 DOM 不是终端，ESC 没有字形可渲染，
+  不剥就只剩 `[0[01;33m` 这类参数当正文显示。只剥"消息"文本（`message`），
+  **diff 内容与文件名一律逐字节保真**。
 
 ### 差异查看
 
@@ -163,10 +170,13 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
 | `push` | `{ cwd }` | `{ message }`（120s 超时） |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
-| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-empty`、`cancelled`、`llm-failed`。 |
+| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
 
 > 失败结果的 `error.code` 在线路上固定为 `"internal"`（Connection 信封只要求它是字符串），
 > 插件自己的诊断码放在 `error.details.code`；客户端按该码做本地化文案。
+>
+> `fetch`/`pull`/`push`/`stage`/`commit` 的 `message` 就是 **git 自己的输出**（已剥掉 ANSI 颜色码）：
+> git 什么都没说时是空串，界面用 `output.<action>` 的中文短句做通知、把这段原文放进可展开的"详情"。
 
 ## 设计决策与边界
 
@@ -176,7 +186,9 @@ dsh plugin --profile web remove @xia-sc/dsh-git
   "暂存全部"按钮（`git add --all`），而不是让提交隐式暂存。
 - **AI 生成会把改动的 diff 发给你配置的模型提供方**——可能是第三方网关。
   这是显式点击"✨ AI 生成"才会发生的联网行为；插件本身不联网。diff 截断到
-  12000 字符后发送，且不发送任何仓库外的内容。
+  12000 字符后发送，且不发送任何仓库外的内容。输出上限 8192 token：思考型
+  模型的 reasoning 与正文共用同一份 completion 预算，上限太小会"一个字都没
+  写就超限"，此时报 `llm-truncated` 而不是含糊的 `llm-empty`。
 - **push/pull 凭据**来自系统（Git Credential Manager / SSH agent）；插件
   绝不碰凭据存储。AI 生成同样不接触凭据——API key 由模型适配器自己解析。
 - **插件绝不修改 git config**；缺 author 时给出明确错误而不是悄悄补写。
@@ -223,3 +235,7 @@ dsh plugin --profile web remove @xia-sc/dsh-git
   - 后两个都必须 spawn git 的管道 stdio，故**不在 `npm test` 内**——请在没有
     该限制的环境（普通终端）单独运行。
   git 命令集对照运行中的服务端做端到端验证。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。

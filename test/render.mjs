@@ -104,6 +104,19 @@ const ctx = {
         if (endpoint === "generateMessage") {
           return { ok: true, value: { message: "feat: generated subject", mode: "staged" } };
         }
+        if (endpoint === "push") {
+          // Exactly what a Gitee push returns through the sideband: SGR colour
+          // codes, and a truncated `ESC[0` right before a complete sequence.
+          return { ok: true, value: { message: "remote: Powered by \u001B[0\u001B[01;33mGITEE.COM \u001B[0\u001B[m[1.1.23]\nTo gitee.com:x/y.git\n   abc1234..def5678  main -> main" } };
+        }
+        if (endpoint === "stage") {
+          // `git add` on a CRLF checkout: three lines of advice, no news.
+          return { ok: true, value: { message: [
+            "warning: in the working copy of 'docs/statistical-api.md', LF will be replaced by CRLF the next time Git touches it",
+            "warning: in the working copy of 'docs/statistical-students-api.md', LF will be replaced by CRLF the next time Git touches it",
+            "warning: in the working copy of 'docs/statistical-user-api.md', LF will be replaced by CRLF the next time Git touches it"
+          ].join("\n") } };
+        }
         if (endpoint === "diff") {
           return { ok: true, value: {
             repo: true,
@@ -256,6 +269,74 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (store.getSnapshot().lastResult?.text !== "localized") {
     throw new Error(`act() describe() must own the failure wording, got ${JSON.stringify(store.getSnapshot().lastResult)}`);
   }
+}
+
+// Operation output: the card is the FIRST thing in the panel body, git's own
+// words hide behind a toggle, and escapes are stripped at the transport
+// boundary. Previously git's raw text WAS the notification, so a push banner or
+// three LF/CRLF warnings were all the user saw.
+{
+  const CLEAN = "remote: Powered by GITEE.COM [1.1.23]\nTo gitee.com:x/y.git\n   abc1234..def5678  main -> main";
+  const pushed = await store.act("push", () => store.verbs.push("C:/repo"));
+  if (pushed?.ok !== true) throw new Error("push verb failed");
+  const pushResult = store.getSnapshot().lastResult;
+  if (pushResult?.kind !== "ok" || pushResult.action !== "push") {
+    throw new Error(`unexpected push result: ${JSON.stringify(pushResult)}`);
+  }
+  if (pushResult.text !== null) throw new Error("a success must be worded by the panel's own summary, not by git's text");
+  if (pushResult.detail !== CLEAN) throw new Error(`unexpected sanitized banner: ${JSON.stringify(pushResult.detail)}`);
+  if (pushResult.detail.includes("\u001B")) throw new Error("ESC bytes must never reach the panel");
+  if (pushResult.detail.includes("[01;33m") || pushResult.detail.includes("[0[m")) {
+    throw new Error(`banner parameters leaked into the panel: ${JSON.stringify(pushResult.detail)}`);
+  }
+
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  const outputAt = html.indexOf('data-dsh-git="output"');
+  const changesAt = html.indexOf('data-dsh-git="change-row"');
+  if (outputAt < 0) throw new Error("the operation output box must carry its test hook");
+  if (changesAt < 0) throw new Error("change rows missing from the expanded panel");
+  if (!(outputAt < changesAt)) throw new Error("the operation output must render above the change list");
+  if (!html.includes("output.push")) throw new Error("the card must show the localized action phrase");
+  if (html.includes("Powered by GITEE.COM")) throw new Error("git's raw output must stay collapsed until asked for");
+  if (!html.includes('data-dsh-git="output-toggle"')) throw new Error("a result carrying git output must offer the detail toggle");
+
+  // Expanded: the same card carries git's words verbatim.
+  const { stripAnsiEscapes, outputView } = mod.__internals;
+  if (typeof outputView !== "function") throw new Error("client must expose outputView for the render test");
+  const expanded = renderToStaticMarkup(outputView(pushResult, commonProps.t, true, () => {}));
+  if (!expanded.includes("Powered by GITEE.COM") || !expanded.includes('data-dsh-git="output-detail"')) {
+    throw new Error(`the expanded card must show git's raw output: ${expanded}`);
+  }
+
+  // A diff body is data, not a message: the transport must not rewrite it.
+  const diffRes = await store.verbs.diff("C:/repo", "src/a.js", null);
+  if (diffRes?.value?.worktree?.diff !== WORKTREE_DIFF) throw new Error("the diff body must pass through byte-faithful");
+
+  // The stripper itself: complete and truncated CSI, OSC, and plain text.
+  if (typeof stripAnsiEscapes !== "function") throw new Error("client must expose stripAnsiEscapes for the render test");
+  if (stripAnsiEscapes("a\u001B[31mb\u001B[0m") !== "ab") throw new Error("complete SGR sequences must be removed");
+  if (stripAnsiEscapes("x\u001B[0\u001B[01;33mY") !== "xY") throw new Error("a truncated CSI must be dropped too");
+  if (stripAnsiEscapes("\u001B]0;title\u0007kept") !== "kept") throw new Error("OSC sequences must be removed");
+  if (stripAnsiEscapes("plain text") !== "plain text") throw new Error("plain text must be untouched");
+
+  // The reported case: `git add` on a CRLF checkout answers with three lines of
+  // advice. The notification must be one short localized line; the advice is the
+  // detail.
+  const staged = await store.act("stage", () => store.verbs.stage("C:/repo"));
+  if (staged?.ok !== true) throw new Error("stage verb failed");
+  const stageResult = store.getSnapshot().lastResult;
+  if (stageResult.text !== null) throw new Error("the LF/CRLF warnings must not be the summary line");
+  if (!stageResult.detail.includes("LF will be replaced by CRLF")) throw new Error("git's warnings must survive as detail");
+  const stageHtml = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  if (!stageHtml.includes("output.stage")) throw new Error("the stage card must show the localized summary");
+  if (stageHtml.includes("LF will be replaced by CRLF")) throw new Error("the warnings must start collapsed");
+  if (stageHtml.indexOf('data-dsh-git="output"') > stageHtml.indexOf('data-dsh-git="change-row"')) {
+    throw new Error("the card must stay at the top of the body");
+  }
+  const collapsed = renderToStaticMarkup(outputView(pushResult, commonProps.t, false, () => {}));
+  if (collapsed.includes("Powered by")) throw new Error(`a collapsed card must hide git's output: ${collapsed}`);
+  console.log("operation card:", JSON.stringify(collapsed.slice(0, 240)));
+  console.log("operation output:", JSON.stringify(pushResult.detail.slice(0, 48)), "/ stage summary is one localized line");
 }
 
 // Every change row is a control, because the change list is the diff viewer's

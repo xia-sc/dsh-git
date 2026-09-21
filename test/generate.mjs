@@ -187,6 +187,50 @@ function fakeLlm(options = {}) {
   check("stream: blank output is rejected", failure?.pluginCode === "llm-empty", String(failure?.pluginCode));
 }
 
+// a cap hit before any text existed is its own failure, not a generic empty one
+// (the regression: a reasoning model spends `completion_tokens` on its thinking,
+// so the old 256-token cap truncated the call and the UI blamed the model)
+{
+  const llm = fakeLlm({
+    chunks: [
+      { type: "block-start", index: 0, blockType: "reasoning" },
+      { type: "reasoning-delta", index: 0, text: "weighing the diff…" },
+      { type: "block-end", index: 0, block: { type: "reasoning", text: "weighing the diff…" } },
+      { type: "finish", reason: { kind: "max-tokens" } }
+    ]
+  });
+  let failure = null;
+  try {
+    await requestCommitMessage({ llm }, generationPrompt("", ""), { provider: "a", model: "m" }, undefined);
+  } catch (error) {
+    failure = error;
+  }
+  check("stream: a cap hit with no text throws", failure !== null);
+  check("stream: a cap hit is coded llm-truncated", failure?.pluginCode === "llm-truncated", String(failure?.pluginCode));
+  check("stream: a cap hit names the limit", /token/i.test(String(failure?.message)), String(failure?.message));
+}
+
+// …but text that DID arrive before the cap is still a usable message
+{
+  const llm = fakeLlm({
+    chunks: [
+      { type: "text-delta", index: 0, text: "feat: " },
+      { type: "text-delta", index: 0, text: "add thing" },
+      { type: "finish", reason: { kind: "max-tokens" } }
+    ]
+  });
+  const message = await requestCommitMessage({ llm }, generationPrompt("", ""), { provider: "a", model: "m" }, undefined);
+  check("stream: a capped but non-empty message is returned", message === "feat: add thing", JSON.stringify(message));
+}
+
+// the cap must leave room for a reasoning model's thinking before the message
+{
+  const llm = fakeLlm();
+  await requestCommitMessage({ llm }, generationPrompt("", ""), { provider: "a", model: "m" }, undefined);
+  const cap = llm.calls[0].maxTokens;
+  check("stream: the output cap tolerates reasoning tokens", typeof cap === "number" && cap >= 4096, String(cap));
+}
+
 // ── commit-message normalization ─────────────────────────────────────────────
 // The regression this guards: a subject+body message (exactly what the
 // generation prompt above asks for) used to be rejected as a "control

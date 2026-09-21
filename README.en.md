@@ -21,7 +21,13 @@ new-branch-from-base.
   the affected files instead of switching, with a "switch anyway" escape
   hatch, fetch/pull actions, a **commit area** — stage-all button, draft-basis
   picker, "✨ AI draft" button, message input and commit button — collapsible
-  changes and recent-commit lists, last-operation output). The panel is
+  changes and recent-commit lists). **Operation feedback is pinned to the very
+  top of the panel and stays one line tall** — the busy label and the last
+  operation's result are the first rows of the body. The result is a localized
+  phrase ("Pushed", "Staged everything", "Switched to x"); git's own output (a
+  push sideband banner, the `LF will be replaced by CRLF` advice) sits behind a
+  "Details ▾" toggle on the right, so the change list and the log can never push
+  the notification out of sight. The panel is
   **draggable by its header bar**
   (the top row with the Git title — press, drag, release; it stays where
   dropped and is clamped inside the viewport; header buttons/inputs never
@@ -40,6 +46,11 @@ new-branch-from-base.
 - Both seats share one store, so they always agree, and both re-bind when the
   current session (and its cwd) changes. Rebinding clears the selected file —
   the panel never shows another repository's content.
+- **ANSI colour codes are stripped from git's text output**: remotes colour
+  their own banner (gitee's `Powered by GITEE.COM` does), and the panel is a DOM,
+  not a terminal — the ESC byte has no glyph, so only the parameters survived
+  and read as `[0[01;33m`. Only `message` text is stripped; **diff bodies and
+  paths stay byte-faithful**.
 
 ### The diff viewer
 
@@ -202,11 +213,16 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
 | `push` | `{ cwd }` | `{ message }` (120s timeout) |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
-| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-empty`, `cancelled`, `llm-failed`. |
+| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
 
 > A failed result carries `error.code === "internal"` on the wire (the Connection
 > envelope only requires a string), with the plugin's own diagnostic in
 > `error.details.code`; the client localizes from that code.
+>
+> The `message` of `fetch`/`pull`/`push`/`stage`/`commit` is **git's own output**
+> (ANSI colour codes stripped): an empty string when git said nothing. The panel
+> notifies with an `output.<action>` phrase and keeps that text behind its
+> expandable "Details".
 
 ## Design decisions & boundaries
 
@@ -219,6 +235,10 @@ shell metacharacters, and leading dashes are all recorded verbatim.
   configured** — possibly a third-party gateway. It only happens when you click
   "✨ AI draft"; the plugin itself never calls the network. The diff is
   truncated to 12000 characters, and nothing outside the repository is sent.
+  The output cap is 8192 tokens: a reasoning model shares that completion budget
+  between its thinking and the message, so a cap sized for the message alone
+  produces "hit the cap before writing anything" — reported as `llm-truncated`
+  rather than a vague `llm-empty`.
 - **push/pull credentials** come from the system (Git Credential Manager /
   SSH agent); the plugin never touches credential storage. AI drafting never
   touches credentials either — the model adapter resolves its own API key.
@@ -282,3 +302,7 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 - The last two need piped child-process stdio, so they are deliberately **not**
   part of `npm test` — run them from an ordinary terminal.
 - The git command set is verified end-to-end against the running server.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

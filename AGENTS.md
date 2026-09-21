@@ -130,11 +130,21 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   未换行时行宽取 `max-content`（底色铺满横向滚动），换行时置 0（否则 `pre-wrap` 永不生效）；换行属性要写在
   文本 span 上（它自带 `white-space: pre`，写在行上会被覆盖）。
 - **`data-dsh-git` 是测试钩子**，改名等于改测试：`dock`、`dock-row`、`panel`、`panel-drag`、`panel-left`、
-  `panel-resize`、`change-row`、`diff`、`diff-header`、`diff-body`、`diff-row`、`diff-close`、`diff-wrap`、
-  `diff-copy`、`diff-reload`、`diff-scope-worktree`、`diff-scope-index`、`diff-empty`、`diff-binary`、
-  `diff-untracked`；行还有 `data-kind`、选中行有 `data-active`。
-- `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`）。
-  SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
+  `panel-resize`、`output`、`output-toggle`、`output-detail`、`change-row`、`diff`、`diff-header`、`diff-body`、
+  `diff-row`、`diff-close`、`diff-wrap`、`diff-copy`、`diff-reload`、`diff-scope-worktree`、`diff-scope-index`、
+  `diff-empty`、`diff-binary`、`diff-untracked`；行还有 `data-kind`、选中行有 `data-active`。
+- **操作反馈（`output`）永远在 body 最上边，且只占一行**：push 的 sideband banner 动辄三四行，放在最下边会
+  掉到变更列表之下（400px 面板里等于没人看得见），直接铺开又会把通知变成一屏 git 提示。所以卡片 =
+  「本地化短句（`output.<action>`，store 不持有 `t`，由面板按 `action` 翻译）+ `详情 ▾` 折叠的 git 原始输出」。
+  只有 git 真有输出（`message` 非空）时才出现 `output-toggle`；失败时短句是诊断的首 160 字符、全文进详情。
+  **新增一个 `store.act("<action>", …)` 就要同时加 zh/en 的 `output.<action>` 文案**，否则界面会显示键名。
+  宿主的 `fetch`/`pull`/`push`/`stage` 在 git 无输出时返回空串（不再编 "push complete" 这类英文占位）。
+- **git 的 `message` 文本在 `rpc()` 边界剥 ANSI**（`stripAnsiEscapes`）：远端会给自己的 banner 上色
+  （Gitee 甚至先发一个截断的 `ESC[0`），DOM 里没有字形可渲染，只剩 `[0[01;33m` 这种参数当正文显示。
+  只剥 `value.message` / `error.message`，**diff body 与路径一律不动**（内容必须逐字节保真）。
+- `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`、
+  `stripAnsiEscapes`、`outputView`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；
+  运行时不要用它。
 - 面板的"自动刷新"由 `dataVersion` 驱动：它是 `cwd | oid | branch | dirty | 每个文件的 XY 字母与路径`。
   带上 XY 是因为 `git add` 恰好不改文件数量与 dirty 计数——只按数量做签名，暂存后打开的 diff 不会重读。
 
@@ -168,7 +178,7 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.5.2）。
+1. 改 `package.json` 的版本号（当前 0.5.3）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
