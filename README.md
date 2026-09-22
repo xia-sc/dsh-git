@@ -85,8 +85,11 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   模型，生成的提交信息直接填入输入框；不满意可改，也可以直接手写。
 
 生成用的模型路由取当前会话的 `modelSelection` 投影（待生效的选择优先，
-其次是上次实际使用），取不到时回落到宿主注册的第一条路由。失败会以
-本地化文案显示在"上次操作输出"里（无可用改动 / 未配置模型 / 生成失败等）。
+其次是上次实际使用），取不到时回落到宿主注册的第一条路由。请求会带上**当前会话 id**
+（`sessionId`），因为部分网关（例如本机配置的 opencode 系路由）要求会话亲和头，
+而宿主只在请求带 `sessionId` 时才把它转给适配器——不带就会被网关以
+`MissingSessionID` 拒掉。失败会以本地化文案显示在"上次操作输出"里
+（无可用改动 / 未配置模型 / 生成失败等；未知失败码先给本地化短句，再附宿主的原始诊断）。
 
 ## 架构
 
@@ -180,7 +183,7 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
 | `push` | `{ cwd }` | `{ message }`（120s 超时） |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
-| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
 
 > 失败结果的 `error.code` 在线路上固定为 `"internal"`（Connection 信封只要求它是字符串），
 > 插件自己的诊断码放在 `error.details.code`；客户端按该码做本地化文案。

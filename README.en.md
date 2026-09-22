@@ -122,8 +122,13 @@ The commit area follows the real order of operations: **stage all → draft → 
 
 The model route comes from the current session's `modelSelection` projection
 (pending pick first, then last used), falling back to the host's first
-registered route. Failures are reported in the last-operation output with a
-localized sentence (no changes / no model configured / draft failed, …).
+registered route. The request carries the **current session id** (`sessionId`):
+some gateways (the opencode-style routes on this machine, for one) require a
+session-affinity header, and the host forwards a session id to its adapter only
+when the request has one — without it the gateway answers `MissingSessionID`.
+Failures are reported in the last-operation output with a localized sentence
+(no changes / no model configured / draft failed, …); an unrecognized failure
+code leads with the localized sentence and appends the host's own diagnosis.
 
 ## Architecture
 
@@ -232,7 +237,7 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
 | `push` | `{ cwd }` | `{ message }` (120s timeout) |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
-| `generateMessage` | `{ cwd, mode?, provider?, model? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. `sessionId` is an optional non-empty string (over 200 chars is `invalid-session`); the panel sends the current session id so session-affine gateways can route the call. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
 
 > A failed result carries `error.code === "internal"` on the wire (the Connection
 > envelope only requires a string), with the plugin's own diagnostic in

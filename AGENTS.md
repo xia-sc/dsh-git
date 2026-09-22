@@ -20,7 +20,8 @@
 | `lib/client.js` | 浏览器半：**手写产物，无构建步骤**，一个 `__ModuleLoader__.load` factory 里装着全部 UI + store + diff 渲染 | 禁止引进构建链；改它刷新页面即生效 |
 | `cordis.patch.yml` | 组合层 patch：一条 `insert` 行（`id: dsh-git` / `name: '@xia-sc/dsh-git'`） | **故意不写 `inject`**——模块导出的 `inject` 才是 Cordis 读的声明 |
 | `test/smoke.mjs` | 路由/信封/端点分发/入参校验 + 客户端 bundle 结构；**不 spawn git** | 默认门禁，`npm test` 第一个 |
-| `test/host-mount.mjs` | 在真 Cordis + 真 `dsh-client-connection` 上挂载插件行（从 `DSH_HOME` 的 profile 解析；找不到就 SKIP） | 宿主换版后先跑这个 |
+| `test/host-mount.mjs` | 在真 Cordis + 真 `dsh-client-connection` 上挂载插件行，并用**宿主自己的 zod schema** 校验手写信封（真路由处理器 + 假 req/res；从 `DSH_HOME` 的 profile 解析；找不到就 SKIP） | 宿主换版后先跑这个 |
+| `test/slot-mount.mjs` | 用**真** `SlotCore`/`SlotRegistry` + 真渲染器把两个座位挂起来（真 Cordis、真 `useSessions`/`sessionId`/`locale` 座位、无 `data-slot-error`） | 浏览器半的换版守护；SSR 跑不到 effect（见文件头），找不到宿主包就 SKIP |
 | `test/generate.mjs` | AI 起草提交信息的纯单元：路由解析、prompt、截断、流式拼装、失败码 | 不 spawn git |
 | `test/render.mjs` | 双界面真实 React SSR：两个座位、提交区控件、diff 解析器与行渲染、`act()` 回传 | 需要 `react`/`react-dom`，见 §5 |
 | `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、重命名配对、删除、二进制、截断、校验） | 需要 spawn git，不在 `npm test` 内 |
@@ -32,7 +33,7 @@
 ## 2. 常用命令
 
 ```powershell
-npm test                  # smoke → host-mount → generate → render（不 spawn git）
+npm test                  # smoke → host-mount → slot-mount → generate → render（不 spawn git）
 node test/smoke.mjs       # 单独跑；改任何文件后最快的门禁
 npm run test:diff         # 端到端 diff（必须能 spawn git，见 §8）
 npm run test:commit       # 端到端 commit
@@ -118,8 +119,10 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   `sessionId` + `cwd` 绑进 store（`store.bindSession`），根作用域的 `shell.overlay` **只读 store**，
   自己不去找"当前会话"。**别反转这两边**——0.1.6-alpha.2 起根作用域根本查不到当前会话，
   反转的后果是胶囊与面板一起**静默**消失。完整原因、证据与判据见 `COMPAT.md` §1。
-- 状态订阅用 `useState + useEffect`（**不要用 `useSyncExternalStore`**：shell 的 react seed 是实验版
-  18.3.1-next，该 API 会返回 undefined 或抛错）。
+- 状态订阅用 `useState + useEffect`（**不要用 `useSyncExternalStore`**）。理由不是"seed 是坏的"——
+  渲染器给标准 hook（`useSessions`）用的就是 `useSyncExternalStoreWithSelector`，且优先用 React 自带实现
+  （`dsh-client-ui-renderer/lib/client.js` 的 `exports.useSyncExternalStore = void 0 !== e.useSyncExternalStore ? …`）；
+  这样写只是让本 store 的订阅不依赖 seed 里那份 uSES 实现。别再把它写成"18.3.1-next 会返回 undefined"。
 - 所有面向用户的字符串都进 `NS` 字典（zh + en 两份，键必须对齐）；面板宽度/颜色等一律用主题变量
   `var(--dsw-alias-*, <fallback>)`，别写死颜色。
 - **两栏布局与宽度手柄**：`selected` 非空时 body 变成 `[左栏 300][diff pane]`；宽度手柄是**面板最右侧那条边**
@@ -173,15 +176,21 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   （Gitee 甚至先发一个截断的 `ESC[0`），DOM 里没有字形可渲染，只剩 `[0[01;33m` 这种参数当正文显示。
   只剥 `value.message` / `error.message`，**diff body 与路径一律不动**（内容必须逐字节保真）。
 - `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`、
-  `stripAnsiEscapes`、`outputView`、`sectionView`、`changeTagStyle`）。SSR 不跑 effect，所以面板自己的读取
-  无法用静态渲染驱动，只能这样测；运行时不要用它。
+  `stripAnsiEscapes`、`outputView`、`sectionView`、`changeTagStyle`、`panelBoxStyle`、`DIFF_PANEL_HEIGHT`、
+  `sessionModelRoute`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
+- **AI 起草的请求必须带会话身份**：面板把 `state.sessionId` 交给 `generateMessage` 端点，宿主放进
+  `GenerateOptions.sessionId`——部分网关（opencode 系）要求会话亲和头，而宿主只在请求带 `sessionId` 时
+  才转给适配器。模型路由由 `sessionModelRoute()` 从**两个投影面**取（行上的 `projectionValues` 与
+  快照的 `projectionsBySession[id].values`），两面都不能少，否则静默回落。
 - 面板的"自动刷新"由 `dataVersion` 驱动：它是 `cwd | oid | branch | dirty | 每个文件的 XY 字母与路径`。
   带上 XY 是因为 `git add` 恰好不改文件数量与 dirty 计数——只按数量做签名，暂存后打开的 diff 不会重读。
 
 ## 5. 测试怎么写
 
-- **不 spawn git 的四个**是默认门禁：加端点/校验就加到 `test/smoke.mjs`；加纯逻辑就进 `test/generate.mjs`
-  或 render 的解析器断言；加 UI 就进 `test/render.mjs`（SSR，能覆盖结构、文案、解析与行渲染）。
+- **不 spawn git 的五个**是默认门禁：加端点/校验就加到 `test/smoke.mjs`；加纯逻辑就进 `test/generate.mjs`
+  或 render 的解析器断言；加 UI 就进 `test/render.mjs`（SSR，能覆盖结构、文案、解析与行渲染）；
+  改宿主/座位契约就指望 `test/host-mount.mjs`（信封 schema）与 `test/slot-mount.mjs`（真座位注册）——两者
+  没有 profile 时都打印 SKIP 并退 0。
 - **必须 spawn git 的**（`test/diff.mjs` / `test/commit.mjs`）单独成文件并加 `npm run test:xxx`，
   不要塞进 `npm test`——沙箱里子进程管道 stdio 会 EPERM（见 §8）。
 - `test/render.mjs` 需要一份真实 `react`/`react-dom`，解析顺序：`DSH_GIT_REACT_ROOT` → `$DSH_HOME/profiles/web/node_modules`
@@ -208,7 +217,7 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.6.0）。
+1. 改 `package.json` 的版本号（当前 0.6.1）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
@@ -301,7 +310,8 @@ half in `lib/client.js`, no build step, `react` is the only module the factory m
 the `/dsh-git-rpc` route and must keep the `connection.requestRejection` fence; it never imports
 `@deepseek-ai/*` runtime packages and never writes the index, the working tree, or git config outside the
 explicit `stage`/`commit`/`checkout` endpoints. Client edits apply on page refresh, host edits need a
-`dsh web` restart. Tests are the only gate: `npm test` runs the four git-free suites; `npm run test:diff`
+`dsh web` restart. Tests are the only gate: `npm test` runs the five git-free suites (smoke, host-mount,
+slot-mount, generate, render); `npm run test:diff`
 and `npm run test:commit` are real-git end-to-end tests that need to spawn git (blocked in a confined
 sandbox) and are therefore kept out of `npm test`. The one CI workflow (`.github/workflows/publish.yml`)
 does nothing but publish: a `vX.Y.Z` tag runs the gate and `npm publish --provenance` (OIDC trusted

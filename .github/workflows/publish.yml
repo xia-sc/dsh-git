@@ -57,8 +57,8 @@ jobs:
             exit 1
           fi
 
-      # 唯一的门禁（AGENTS.md §2）。不需要 npm install：四个套件只用 node 内置模块，
-      # 缺 profile / react 的两个会自己 SKIP。
+      # 唯一的门禁（AGENTS.md §2）。不需要 npm install：五个套件只用 node 内置模块，
+      # 缺 profile / react 的三个（host-mount、slot-mount、render）会自己 SKIP。
       - name: Run the gate
         run: npm test
 

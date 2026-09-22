@@ -64,6 +64,8 @@ const mod = handoff.factory((spec) => {
 // Capture the slot registrations performed by apply(). The rpc stub answers
 // the three load endpoints so the expanded seats render real content.
 const calls = [];
+/** Every RPC the client made, with its payload (the wire-level assertions). */
+const sent = [];
 const registrations = [];
 let activeReg = null;
 
@@ -90,8 +92,9 @@ const ctx = {
   locale: { register() { return () => {}; } },
   connection: {
     rpc: {
-      call: async (channel, endpoint) => {
+      call: async (channel, endpoint, payload) => {
         calls.push(`${channel}/${endpoint}`);
+        sent.push({ endpoint, payload });
         if (endpoint === "status") {
           return { ok: true, value: { repo: true, branch: "main", detached: false, oid: "abc1234", upstream: "origin/main", ahead: 1, behind: 0, dirty: 2, changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }] } };
         }
@@ -251,10 +254,22 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   console.log("dock loaded render bytes:", html.length);
 }
 
-// The draft verb routes to the endpoint with the session's own model route.
+// The draft verb routes to the endpoint with the session's own model route AND
+// with the session id: a session-affine gateway rejects an unidentified call.
 {
-  await store.verbs.generateMessage("C:/repo", "staged", "alpha", "alpha-large");
+  await store.verbs.generateMessage("C:/repo", "staged", "alpha", "alpha-large", "s1");
   if (!calls.includes("/dsh-git-rpc/generateMessage")) throw new Error("generateMessage verb did not call the channel");
+  const drafted = sent.filter((entry) => entry.endpoint === "generateMessage");
+  const last = drafted[drafted.length - 1];
+  if (last?.payload?.args?.sessionId !== "s1") throw new Error(`the draft verb must forward its session id: ${JSON.stringify(last)}`);
+  if (last?.payload?.args?.provider !== "alpha" || last?.payload?.args?.model !== "alpha-large") {
+    throw new Error(`the draft verb must forward the session's model route: ${JSON.stringify(last)}`);
+  }
+  // A caller with no session (a host-side call) keeps sessionId absent rather
+  // than sending null/empty, which the endpoint would reject.
+  await store.verbs.generateMessage("C:/repo", "staged");
+  const unbound = sent.filter((entry) => entry.endpoint === "generateMessage").pop();
+  if (unbound?.payload?.args?.sessionId !== undefined) throw new Error(`an unbound draft must omit sessionId: ${JSON.stringify(unbound)}`);
 }
 
 // The store's act() resolves with the raw result and localizes a coded failure.
@@ -533,6 +548,34 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (split.height !== DIFF_PANEL_HEIGHT) throw new Error("the two-pane height must come from the shared constant");
   if (split.width !== 300 + 2 + 560) throw new Error(`unexpected two-pane width: ${split.width}`);
   console.log("panel box: single content-sized, two-pane pinned at", DIFF_PANEL_HEIGHT);
+}
+
+// The draft route reads BOTH projection surfaces the host has shipped: the
+// session row's own `projectionValues` (0.1.6+) and the snapshot's per-session
+// `projectionsBySession[id].values` (0.1.7+). Losing either one silently
+// degrades every draft to the host's first registered route.
+{
+  const { sessionModelRoute } = mod.__internals;
+  if (typeof sessionModelRoute !== "function") throw new Error("client must expose sessionModelRoute for the render test");
+  const rowSurface = sessionModelRoute({ projectionValues: { modelSelection: { next: { provider: "p1", model: "m1" } } } }, undefined, "s1");
+  if (rowSurface?.provider !== "p1" || rowSurface.model !== "m1") throw new Error(`row projectionValues route lost: ${JSON.stringify(rowSurface)}`);
+  const snapshotSurface = sessionModelRoute(undefined, { projectionsBySession: { s1: { values: { modelSelection: { lastUsed: { provider: "p2", model: "m2" } } } } } }, "s1");
+  if (snapshotSurface?.provider !== "p2" || snapshotSurface.model !== "m2") throw new Error(`projectionsBySession route lost: ${JSON.stringify(snapshotSurface)}`);
+  // The row wins when both carry a value, and `next` (a pending pick) beats `lastUsed`.
+  const both = sessionModelRoute(
+    { projectionValues: { modelSelection: { lastUsed: { provider: "row", model: "r" } } } },
+    { projectionsBySession: { s1: { values: { modelSelection: { next: { provider: "snap", model: "s" } } } } } },
+    "s1"
+  );
+  if (both?.provider !== "row") throw new Error(`the row projection must win: ${JSON.stringify(both)}`);
+  const pending = sessionModelRoute({ projectionValues: { modelSelection: { lastUsed: { provider: "old", model: "o" }, next: { provider: "new", model: "n" } } } }, undefined, "s1");
+  if (pending?.provider !== "new") throw new Error(`the pending pick must win: ${JSON.stringify(pending)}`);
+  // No route at all stays null, so generation falls back to the host's own pick.
+  if (sessionModelRoute(undefined, { projectionsBySession: { s9: { values: {} } } }, "s1") !== null) {
+    throw new Error("an absent projection must yield null");
+  }
+  if (sessionModelRoute(null, undefined, null) !== null) throw new Error("an unbound store must yield null");
+  console.log("draft route: row + projectionsBySession surfaces both read, next beats lastUsed");
 }
 
 // The diff pane itself, in its initial (loading) state: header, side switch,

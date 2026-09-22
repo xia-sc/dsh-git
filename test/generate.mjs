@@ -115,10 +115,22 @@ function fakeLlm(options = {}) {
   check("stream: carries exactly one message", Array.isArray(request.messages) && request.messages.length === 1);
   const carried = request.messages[0];
   check("stream: message is a user message", carried.role === "user", carried.role);
-  check("stream: message has a fresh id", typeof carried.id === "string" && carried.id.length > 0);
   check("stream: message has one text block", carried.content.length === 1 && carried.content[0].type === "text");
-  check("stream: message is attributed to this plugin", carried.source?.kind === "plugin" && carried.source.plugin === "dsh-git", JSON.stringify(carried.source));
+  // The host's hand-built one-shot input (`RequestUserInput`) is exactly
+  // `{role, content}`: 0.1.7 retired the catch-all `plugin` source kind, and
+  // Session format v4 refuses it, so neither `id` nor `source` may appear here.
+  check("stream: message carries no durable id", carried.id === undefined, JSON.stringify(carried.id));
+  check("stream: message carries no source", carried.source === undefined, JSON.stringify(carried.source));
+  check("stream: message owns only role+content", Object.keys(carried).sort().join(",") === "content,role", Object.keys(carried).join(","));
   check("stream: system prompt is forwarded", typeof request.system === "string" && request.system.length > 0);
+  check("stream: no session id when the caller has none", request.sessionId === undefined, JSON.stringify(request.sessionId));
+}
+
+// a session-scoped caller (the panel) must forward its session to the adapter
+{
+  const llm = fakeLlm();
+  await requestCommitMessage({ llm }, generationPrompt("s", "d"), { provider: "alpha", model: "alpha-large" }, undefined, "session-1");
+  check("stream: a session-scoped call forwards its session id", llm.calls[0].sessionId === "session-1", JSON.stringify(llm.calls[0].sessionId));
 }
 
 // delta-only adapter (no block-end): the fallback path must still work

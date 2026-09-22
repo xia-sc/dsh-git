@@ -9,8 +9,9 @@
 
 按这个顺序走，能最快把"插件坏了"和"宿主换 API 了"分开；每一步的判据都写明了。
 
-1. **默认门禁**：`npm test`。`test/host-mount.mjs` 会在真 Cordis + 真 `dsh-client-connection` 上挂一次
-   插件行，挂不上会直接说原因（它从 `DSH_HOME` 的 profile 解析依赖，找不到就 SKIP）。
+1. **默认门禁**：`npm test`。其中 `test/host-mount.mjs` 会在真 Cordis + 真 `dsh-client-connection` 上挂一次
+   插件行，并用宿主自己的 zod schema 校验插件手写的信封；`test/slot-mount.mjs` 会用真的
+   `dsh-client-ui-slots` / `dsh-client-ui-renderer` 挂一次两个座位（两者找不到 profile 时都 SKIP）。
 2. **宿主半是否活着**：拿 `dsh web` 启动时打印的 token 换 cookie，再打一次端点。
    `401 unauthorized` = 路由在、围栏在（正常）；`404` = 路由压根没挂上；`200` + 正常 JSON = 宿主半完好。
 
@@ -119,3 +120,86 @@ slot inspect 里 `dsh-git-panel` / `dsh-git-pill` 两个条目**仍然是 `activ
 - client inspect 工具（`Slots` / `Service`）在本机会偶发**卡死**；用第 0 步第 4 项的 HTTP 取证替代。
 - 受限沙箱里 playwright 起 Chrome 会 `spawn EPERM`（`--remote-debugging-pipe` 要命名管道），
   需要放开文件/沙箱策略或换未受限终端，见 `AGENTS.md` §8。
+
+## 4. dsh ≥ 0.1.7-alpha.1
+
+2026-09 全量审计的结论：插件在这一版上**挂得上、跑得通**（宿主半自持路由的 401 围栏、浏览器半两个座位、
+diff 面板、信封 schema 全部在真宿主/真浏览器里验过）。本节只记"再改回去就会静默坏"的耦合与判据，
+体例同上：症状 → 证据 → 根因 → 修法 → 守护测试。
+
+### 4.1 一次性 LLM 消息必须是没有 `id`/`source` 的 `RequestUserInput`
+
+- **症状（若改回去）**：今天不炸，但它已经不在宿主的声明范围内；一旦请求侧加校验、或这条消息被
+  持久化，整条 AI 起草就失败。
+- **证据**：0.1.7 的 `dsh-llm/lib/types/message.d.ts` 里 `MessageSourceMap` 只有
+  `user|model|tool|system-prompt`，注释明写 *"there is no shared catch-all `plugin` kind"*；
+  手工构造的一次性输入被定义为 `RequestUserInput { role, content, id?: never, source?: never }`
+  （`dsh-llm/lib/types/types.d.ts`）；Session format v4 更是硬拒 —— `dsh-session-format-v3-to-v4`
+  只在 v3 迁移时把 `kind:"plugin"` 改写掉，写入 v4 时直接 `SessionFormatError`。
+  0.1.6-alpha.2 的 `packages/llm/llm/src/message.ts` 里 `plugin` 还是合法成员，所以这是宿主删掉的词汇。
+- **根因**：老代码按 0.1.6 的形状写 `{id, role, content, source:{kind:"plugin",plugin}}`；0.1.7 只读
+  `provider/model/messages/…`，非 assistant 消息的 `source` 根本不会被读（所以当时"看起来没事"）。
+- **修法**：`generationMessage()` 返回 `{ role: "user", content: [{ type: "text", text }] }`，
+  不留 `id`、不留 `source`。
+- **守护**：`test/generate.mjs` 断言消息无 `id`、无 `source`、键集恰为 `content,role`。
+
+### 4.2 会话作用域的 LLM 调用必须带 `sessionId`
+
+- **症状**：点「✨ AI 生成」拿到的是网关错误（本机 opencode 系路由：`400 … MissingSessionID`），
+  或者网关以 200 + 空流回应、界面显示「模型没有返回提交信息」。
+- **证据**：`dsh-llm-pi-ai` 只在 `options.sessionId !== undefined` 时才把它交给 pi-ai
+  （`...options.sessionId === void 0 ? {} : { sessionId: String(options.sessionId) }`），
+  而 pi-ai 用它生成会话亲和头（`anthropic-messages.js` 的 `x-session-affinity` 等）。
+  本机 `settings.yaml.imported` 的 `llm-pi-ai.providers` 全是 opencode 系，因此条条命中。
+  注意 0.1.6-alpha.2 的适配器里**根本没有 `sessionId`**：这是插件一直存在的缺口，不是换版回归。
+- **修法**：面板把 `state.sessionId` 传进 `generateMessage` → `GenerateOptions.sessionId`；
+  端点校验"非空字符串、≤ 200 字符"（`invalid-session`），缺省时行为不变。
+- **附带效应**：带上 `sessionId` 后，`dsh-session-checkpoint-policy` 会在模型调用前 flush 该会话
+  （持久性屏障，良性）；`dsh-agent-loop` 的 invariant 与 `dsh-session-title` 仍会跳过一次性请求。
+- **守护**：`test/generate.mjs`（转发 / 缺省）、`test/render.mjs`（verb 载荷）、`test/smoke.mjs`
+  （`invalid-session` 矩阵 + "缺省不得拒绝"）。
+
+### 4.3 会话列表快照里**只有 `byId` 可以依赖**
+
+- 0.1.7 的 `SessionListState` 是 `{ ids, byId, phase, projectionsBySession }`；COMPAT §1 记的
+  `subagentsByParent` / `jobsBySession` 在整棵 0.1.7 树里 **0 命中**（已 grep 复核）。
+- 插件只读 `byId[sessionId]` 的 `cwd` / `retainedBy.mainView` / `projectionValues` —— 都没变，所以安全。
+- `modelSelection` 投影现在有**两个面**：行上的 `projectionValues`（0.1.6+）与快照的
+  `projectionsBySession[id].values`（0.1.7+）。`sessionModelRoute()` 先读行、再读共享记录，
+  少读一面就会静默丢掉用户已经选好的路由。
+- **守护**：`test/render.mjs` 的 `sessionModelRoute` 断言（两面、`next` 优先、缺省为 null）。
+
+### 4.4 RPC 目标是"文档相对"的，而路由按绝对前缀注册（根挂载假设）
+
+- 0.1.7 浏览器端改成 `send(`${channel}/${endpoint}`.slice(1))`（0.1.6 是
+  `new URL(…, resolveBase())`），index 注入的 base 也从 `<base href="/">` 变成 `<base href="./">`。
+- 在根挂载（`/` 或 `/index.html`）下二者等价，实测正常；子目录部署会同时打坏宿主自己的 `/api`，
+  所以**不改代码**，只记这个假设。宿主自己的路由按 `new URL(req.url, "http://x").pathname` 匹配，
+  本插件对 origin-form 目标保留原始字符串（更严格，拒绝 `..`），只对 absolute-form 目标做 URL 解析。
+
+### 4.5 `llm` 是硬 inject，但它不是宿主的"必需启动项"
+
+- `dsh-app-boot` 的 `requiredStartupEntryIds` 只有 `webserver/connection/modules/agent-loop/…`，
+  **不含 `llm`**；非必需行挂载失败只打一行 stderr。若 `dsh-llm` 起不来，本插件会一直 PENDING，
+  结果就是"胶囊和面板一起凭空消失"，而 `dsh web` 自己正常启动。
+- 同理：`apply()` 里"拿不到 `requestRejection` 就抛"的围栏 guard 也只会是警告，不会拒绝启动。
+  **保留**这个 guard（绝不能放行未围栏通道），但排查时要知道它只出现在 stderr 里。
+
+### 4.6 面板几何常量是"量出来的"，不是契约
+
+- `S.panel.bottom = 168` 与 `DIFF_PANEL_HEIGHT` 里的 `184px` 是对 composer 栈（卡片 + 工具行 +
+  dock 带）的实测值；ui-conversation 把这块几何放在自己的模块 CSS 里（`--dsh-composer-stack-gap` 等），
+  没有公开契约。输入框高度变了就要重新量这两处（面板靠 `bottom` 定位，两个数一起动）。
+- 胶囊用 `max-width: var(--dsh-composer-card-max-width, 778px)` + `margin: 0 auto` 对齐输入框
+  （内置 QueueDock 同款写法）。该变量是 ui-conversation 的内部变量，0.1.7 还多了一套 embedded 值；
+  改名不会报错，只会静默退回 778px。
+
+### 4.7 环境噪声（§3 的具体数字）
+
+- profile 的 `@deepseek-ai` 共 258 项，其中 **17 个悬空 junction**，指向三个根：
+  `nvm\v26.9.0`（244）、`nvm\v22.23.1`（8）、`D:\tool\npm\cache\_npx\1e7f6d9597241db0`（5）。
+  悬空的包含 `dsh-client-ui-slots`、`dsh-client-ui-primitives`、`dsh-client-web` 等。
+- profile 顶层的 `react` / `react-dom` 也是悬空 junction，所以 `test/render.mjs` 会回落到插件自己的
+  `node_modules/react`（打印 `react from (node resolution)`）——**它没跑在 shell 真正 seed 的那份 React 上**。
+- `profiles/web/node_modules/@deepseek-ai` 是**空目录**：`test/host-mount.mjs` 的 `findDshRoot()`
+  是靠第二个候选根（`profiles/node_modules`）才找到宿主包的。

@@ -213,6 +213,30 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   }
 }
 
+// generateMessage's optional session id is validated before any work
+{
+  for (const sessionId of ["", 42, {}, "x".repeat(201)]) {
+    const res = await call("generateMessage", { cwd: ABS_CWD, sessionId });
+    if (res.ok || pluginCode(res) !== "invalid-session") {
+      throw new Error(`bad sessionId not rejected: ${JSON.stringify(sessionId)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  // An absent or null session id is valid (the endpoint is usable from a
+  // host-side caller with no session), so it must reach the git read instead.
+  for (const sessionId of [undefined, null]) {
+    const res = await call("generateMessage", { cwd: NO_REPO_CWD, sessionId });
+    if (pluginCode(res) === "invalid-session") {
+      throw new Error(`absent sessionId must not reject: ${JSON.stringify(res)}`);
+    }
+  }
+  // A usable session id likewise dispatches past validation. The repo is not a
+  // work tree, so the answer is a git-side failure, never invalid-session.
+  const dispatched = await call("generateMessage", { cwd: NO_REPO_CWD, sessionId: "session-1" });
+  if (pluginCode(dispatched) === "invalid-session") {
+    throw new Error(`a valid sessionId must dispatch: ${JSON.stringify(dispatched)}`);
+  }
+}
+
 // stage reports the caller's bad cwd, never a repo operation
 {
   const res = await call("stage", { cwd: "relative/path" });
