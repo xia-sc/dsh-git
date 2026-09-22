@@ -348,7 +348,123 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (!html.includes('role="button"')) throw new Error("change rows must be focusable controls");
   if (!html.includes('tabindex="0"')) throw new Error("change rows must be reachable by keyboard");
   if (!html.includes('data-dsh-git="change-row"')) throw new Error("change rows must carry the test hook");
+  // The status chip trails the path (paths line up in one column), and it is
+  // tinted from the status's own state colour instead of one grey chip for all.
+  const pathAt = html.indexOf(">src/a.js<");
+  const tagAt = html.indexOf(">status.modified<");
+  if (!(pathAt >= 0 && tagAt >= 0 && pathAt < tagAt)) {
+    throw new Error("the status chip must render after the path inside the row");
+  }
+  if (!html.includes("color-mix")) throw new Error("status chips must tint from the theme, not hardcoded rgba");
   console.log("change rows rendered as controls:", rows);
+}
+
+// List sections: the header collapses the section, the footer widens a long list.
+// Two separate states — one flag doing both made the chevron point the wrong way
+// for a list that was already on screen.
+{
+  const { sectionView } = mod.__internals;
+  if (typeof sectionView !== "function") throw new Error("client must expose sectionView for the render test");
+  const rows = Array.from({ length: 12 }, (_, index) => React.createElement("div", { key: index, "data-row": index }, `row ${index}`));
+  const spec = {
+    hook: "probe",
+    label: "probe.label",
+    count: 12,
+    open: true,
+    all: false,
+    cap: 8,
+    empty: "empty",
+    rows,
+    onToggle: () => {},
+    onMore: () => {}
+  };
+  const preview = renderToStaticMarkup(sectionView(spec, commonProps.t));
+  if ((preview.split("data-row=").length - 1) !== 8) throw new Error(`the preview must stop at the cap: ${preview}`);
+  if (!preview.includes('data-dsh-git="probe-more"')) throw new Error("a long list must offer its show-all footer");
+  if (!preview.includes("section.more")) throw new Error("the footer must say how many rows are hidden");
+  if (!preview.includes('aria-expanded="true"')) throw new Error("an open section must say so");
+
+  const all = renderToStaticMarkup(sectionView({ ...spec, all: true }, commonProps.t));
+  if ((all.split("data-row=").length - 1) !== 12) throw new Error(`show-all must render every row: ${all}`);
+  if (!all.includes("section.less")) throw new Error("an expanded footer must offer the way back");
+
+  const closed = renderToStaticMarkup(sectionView({ ...spec, open: false }, commonProps.t));
+  if (closed.includes("data-row=")) throw new Error("a collapsed section must hide its rows entirely");
+  if (!closed.includes('aria-expanded="false"')) throw new Error("a collapsed section must say so");
+
+  const empty = renderToStaticMarkup(sectionView({ ...spec, count: 0, rows: [] }, commonProps.t));
+  if (!empty.includes("empty")) throw new Error("an empty section must show its empty wording");
+
+  // And in the real panel: both sections start open with their count on the header.
+  const panelHtml = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  for (const hook of ["changes-header", "log-header"]) {
+    if (!panelHtml.includes(`data-dsh-git="${hook}"`)) throw new Error(`missing section header hook ${hook}`);
+  }
+  if (panelHtml.includes('data-dsh-git="changes-more"')) throw new Error("a two-file list needs no show-all footer");
+  console.log("sections: preview 8/12 + show-all footer, collapse hides rows, panel sections carry their headers");
+}
+
+// A re-read of the SAME workspace must not blank the body: flipping to "loading"
+// collapsed the whole workbench and snapped it back (the jump on ↻). The store
+// reports the re-read through `refreshing` and keeps the data on screen.
+{
+  const during = store.refresh("C:/repo");
+  const mid = store.getSnapshot();
+  if (mid.refreshing !== true) throw new Error(`a same-workspace re-read must set refreshing, got ${JSON.stringify(mid.refreshing)}`);
+  if (mid.phase !== "ready") throw new Error(`a same-workspace re-read must keep its data, got phase ${mid.phase}`);
+  const midHtml = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  if (!midHtml.includes('data-dsh-git="change-row"')) throw new Error("the workbench must stay on screen while refreshing");
+  if (midHtml.includes("loading")) throw new Error("a re-read must not fall back to the loading line");
+  if (!midHtml.includes('aria-busy="true"')) throw new Error("the refresh button must report the re-read");
+  await during;
+  const after = store.getSnapshot();
+  if (after.refreshing !== false) throw new Error("refreshing must clear when the re-read lands");
+  if ((after.changes ?? []).length !== 2) throw new Error("the re-read must still land the fresh data");
+  console.log("refresh: same-workspace re-read keeps the workbench and flags the button");
+}
+
+// Body order: feedback → status/branch → network toolbar → commit card →
+// sections. The old layout interleaved auto-width buttons, so this is the guard
+// that the panel reads top-down as one workflow.
+{
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  const order = [
+    'data-dsh-git="output"',
+    "action.fetch",
+    "action.pull",
+    "action.push",
+    "action.stage",
+    "action.generate",
+    "commit.placeholder",
+    'data-dsh-git="changes-header"',
+    'data-dsh-git="log-header"'
+  ];
+  let previous = -1;
+  for (const needle of order) {
+    const at = html.indexOf(needle);
+    if (at < 0) throw new Error(`body is missing ${needle}`);
+    if (at < previous) throw new Error(`${needle} renders out of order (the body must read top-down)`);
+    previous = at;
+  }
+  console.log("body order:", order.length, "blocks in workflow order");
+}
+
+// The primary buttons must use the harness's contrast pairing. `brand-primary`
+// is an INVERTED colour (near-black on light, near-white on dark), so pairing it
+// with `#fff` made 推送 a blank white block and 提交 an empty grey box.
+{
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  const primary = html.match(/style="[^"]*button-primary-fill[^"]*"/g) ?? [];
+  if (primary.length !== 2) throw new Error(`expected both primary buttons on the button-primary-fill pairing, got ${primary.length}`);
+  for (const style of primary) {
+    if (!style.includes("--dsw-alias-label-primary-foreground")) {
+      throw new Error(`a primary button carries no contrast label colour: ${style}`);
+    }
+  }
+  if (/brand-primary[^"]*color:#fff/.test(html)) {
+    throw new Error("brand-primary is a contrast colour, not an accent — never pair it with #fff");
+  }
+  console.log("primary buttons:", primary.length, "on the button-primary-fill / label-primary-foreground pairing");
 }
 
 // The diff parser: line numbers per side, kind classification, and the one case
@@ -400,6 +516,23 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (parseDiffSide({ diff: "Binary files a and b differ", binary: true, truncated: false }).binary !== true) throw new Error("binary flag lost");
   if (parseDiffSide({ diff: "x", binary: false, truncated: true }).truncated !== true) throw new Error("truncated flag lost");
   console.log("diff parser rows:", parsed.rows.length, "add/del:", parsed.additions, "/", parsed.deletions);
+}
+
+// Opening the diff must not let the pane's async content resize the panel: the
+// two-pane box has a FIXED height, so nothing can jump once the diff lands.
+{
+  const { panelBoxStyle, DIFF_PANEL_HEIGHT } = mod.__internals;
+  if (typeof panelBoxStyle !== "function") throw new Error("client must expose panelBoxStyle for the render test");
+  const single = panelBoxStyle(null, 560);
+  if (single.height !== undefined) throw new Error("the compact panel stays content-sized");
+  if (single.width !== 400) throw new Error(`unexpected single-pane width: ${single.width}`);
+  const split = panelBoxStyle({ file: "src/a.js" }, 560);
+  if (split.height === undefined || split.height !== split.maxHeight) {
+    throw new Error(`the two-pane panel must pin its height, got ${JSON.stringify({ height: split.height, maxHeight: split.maxHeight })}`);
+  }
+  if (split.height !== DIFF_PANEL_HEIGHT) throw new Error("the two-pane height must come from the shared constant");
+  if (split.width !== 300 + 2 + 560) throw new Error(`unexpected two-pane width: ${split.width}`);
+  console.log("panel box: single content-sized, two-pane pinned at", DIFF_PANEL_HEIGHT);
 }
 
 // The diff pane itself, in its initial (loading) state: header, side switch,

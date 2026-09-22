@@ -126,25 +126,55 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   （绝对定位的 `panel-resize`），拖拽时先把面板锚定到当前左边缘再改宽度（居中的面板是 `translateX(-50%)`，
   不锚定的话指针与边会差 2 倍距离）。宽度算式里的常量（`DIFF_LEFT_PANE_WIDTH`、`PANEL_BORDER_WIDTH`、
   `DIFF_MIN_WIDTH`）与 CSS 必须一致，面板用 `box-sizing: border-box`——这几处错一个就会出现"差 24px/2px"。
+  面板盒子统一由 `panelBoxStyle(selected, diffWidth)` 算（单栏 = 内容高度 + 400px；两栏 = `DIFF_PANEL_HEIGHT`
+  **固定高度** + 左栏 + 边框 + diff）。**两栏必须固定高度，不能只给 maxHeight**：面板 `bottom` 定位、高度跟
+  内容走时，diff 异步读回来那一刻面板会长高、整个面板往上跳——这就是"点开 diff 闪一下"。`DIFF_PANEL_HEIGHT`
+  取 `min(72vh, calc(100vh - 184px))`，短窗口也不会顶出视口；`test/render.mjs` 直接断言两栏的
+  `height === maxHeight === DIFF_PANEL_HEIGHT`。
 - diff 渲染的关键规则：`--- `/`+++ ` **只在 hunk 之外**认作文件头（hunk 内以 `--` 开头的删除行仍是改动）；
   未换行时行宽取 `max-content`（底色铺满横向滚动），换行时置 0（否则 `pre-wrap` 永不生效）；换行属性要写在
   文本 span 上（它自带 `white-space: pre`，写在行上会被覆盖）。
 - **`data-dsh-git` 是测试钩子**，改名等于改测试：`dock`、`dock-row`、`panel`、`panel-drag`、`panel-left`、
-  `panel-resize`、`output`、`output-toggle`、`output-detail`、`change-row`、`diff`、`diff-header`、`diff-body`、
+  `panel-resize`、`output`、`output-toggle`、`output-detail`、`changes`、`changes-header`、`changes-body`、
+  `changes-more`、`log`、`log-header`、`log-body`、`log-more`、`change-row`、`diff`、`diff-header`、`diff-body`、
   `diff-row`、`diff-close`、`diff-wrap`、`diff-copy`、`diff-reload`、`diff-scope-worktree`、`diff-scope-index`、
   `diff-empty`、`diff-binary`、`diff-untracked`；行还有 `data-kind`、选中行有 `data-active`。
+- **列表区块是两张卡片**（`sectionView`）：标题行 = chevron + 文案 + 计数胶囊，整段折叠；`all=false` 时只显示
+  前 `CHANGES_PREVIEW`/`LOG_PREVIEW` 行并在底部给「显示全部 N 项」。**折叠与展开预览是两个 state**
+  （`changesOpen`/`changesAll`），别合并回一个——合并过的那版箭头在"列表明明在屏幕上"时指向"收起"，就是
+  用户说的"折叠逻辑有点问题"。section 默认展开，空列表用 `empty` 文案（别在标题里塞 count 之外的参数）。
+- **同一个工作区的重读不许清空界面**：`doRefresh` 里 `keep = cwd === state.cwd && phase === "ready"` 时保持
+  `phase` 不变、只置 `refreshing`，否则点 ↻ / 操作后的重读会把工作台收成一行 loading 再弹回来（"界面跳一下"）。
+  注意 `refreshing` 必须由 `idleState()` 复位，别只靠 emit。
+- **配色只用主题真的定义过的 alias token**：Inspect Theme 报的 13 个是一个子集，完整名字在
+  `dsh-client-ui-theme` 的生成 CSS 里（`grep '--dsw-alias-<name>:'`）。改配色前先核对一遍——用不存在的
+  名字（如 `--dsw-alias-surface-tertiary`、`--dsw-alias-separator-primary`、`--dsw-alias-label-quaternary`）
+  不会报错，只会静默落到兜底的硬编码 rgba，浅色主题下就露馅。淡色底一律
+  `color-mix(in srgb, <token> N%, transparent)`（harness 自己就在用 `color-mix`）。状态标签用
+  `changeTagStyle(status)`：`background` 是 `color-mix(currentColor…)`，所以新增状态只要给一个 token。
+- **两个颜色陷阱**（都踩过）：
+  1. `--dsw-alias-brand-primary` 是**反相强调色**（浅色主题=近黑 `neutral-bluish-1000`，深色主题=近白
+     `neutral-bluish-50`），不是蓝。主按钮必须用 harness 自己的搭配：
+     `background: var(--dsw-alias-button-primary-fill)` + `color: var(--dsw-alias-label-primary-foreground)`
+     （深色主题里就是「白底深字」）。曾经写成 `brand-primary + #fff`，结果深色主题下深字/白字同色 →
+     推送是一个白块、提交是一个空灰块。
+  2. 真正当"蓝"来用的 token 是 `--dsw-alias-state-business-primary`（deepseek 蓝）与 `--dsw-alias-link`；
+     高亮/选中/重命名这类强调一律用它们，别用 `brand-primary`。
 - **操作反馈（`output`）永远在 body 最上边，且只占一行**：push 的 sideband banner 动辄三四行，放在最下边会
   掉到变更列表之下（400px 面板里等于没人看得见），直接铺开又会把通知变成一屏 git 提示。所以卡片 =
   「本地化短句（`output.<action>`，store 不持有 `t`，由面板按 `action` 翻译）+ `详情 ▾` 折叠的 git 原始输出」。
   只有 git 真有输出（`message` 非空）时才出现 `output-toggle`；失败时短句是诊断的首 160 字符、全文进详情。
   **新增一个 `store.act("<action>", …)` 就要同时加 zh/en 的 `output.<action>` 文案**，否则界面会显示键名。
   宿主的 `fetch`/`pull`/`push`/`stage` 在 git 无输出时返回空串（不再编 "push complete" 这类英文占位）。
+- **按钮组一律等宽分栏**（`S.grow` + `S.rowTight`）：网络工具条三个、提交卡片工具行三个。按钮基准高度 26px、
+  圆角 7、`box-sizing: border-box`——加新按钮时沿用 `S.button`/`S.buttonPrimary`，别再手写一堆只差宽度
+  的内联样式（那正是"排列杂乱"的来源）。
 - **git 的 `message` 文本在 `rpc()` 边界剥 ANSI**（`stripAnsiEscapes`）：远端会给自己的 banner 上色
   （Gitee 甚至先发一个截断的 `ESC[0`），DOM 里没有字形可渲染，只剩 `[0[01;33m` 这种参数当正文显示。
   只剥 `value.message` / `error.message`，**diff body 与路径一律不动**（内容必须逐字节保真）。
 - `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`、
-  `stripAnsiEscapes`、`outputView`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；
-  运行时不要用它。
+  `stripAnsiEscapes`、`outputView`、`sectionView`、`changeTagStyle`）。SSR 不跑 effect，所以面板自己的读取
+  无法用静态渲染驱动，只能这样测；运行时不要用它。
 - 面板的"自动刷新"由 `dataVersion` 驱动：它是 `cwd | oid | branch | dirty | 每个文件的 XY 字母与路径`。
   带上 XY 是因为 `git add` 恰好不改文件数量与 dirty 计数——只按数量做签名，暂存后打开的 diff 不会重读。
 
@@ -178,7 +208,7 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.5.3）。
+1. 改 `package.json` 的版本号（当前 0.6.0）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。

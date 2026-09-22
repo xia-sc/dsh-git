@@ -15,13 +15,16 @@ new-branch-from-base.
 ## UI
 
 - **Floating block** (`shell.overlay`): collapsed = renders nothing (no
-  floating element that could cover the input); expanded = the full Git
-  workbench (status line, branch switcher with **dirty-tree pre-check** —
-  selecting a branch while uncommitted changes exist shows a warning listing
-  the affected files instead of switching, with a "switch anyway" escape
-  hatch, fetch/pull actions, a **commit area** — stage-all button, draft-basis
-  picker, "✨ AI draft" button, message input and commit button — collapsible
-  changes and recent-commit lists). **Operation feedback is pinned to the very
+  floating element that could cover the input); expanded = one workflow read
+  top-down: status line (pending count, ahead/behind, upstream) → the branch
+  switcher with its **dirty-tree pre-check** (selecting a branch while
+  uncommitted changes exist warns with the affected files instead of switching,
+  plus a "switch anyway" escape hatch) → a **network toolbar** (Fetch / Pull /
+  Push, three equal columns, Push being the primary button) → a **commit card**
+  (Stage all + draft basis + "✨ AI draft" in equal columns, the message input
+  below it and the commit button) → two list cards. Every button group is split
+  evenly instead of sizing itself to its label.
+  **Operation feedback is pinned to the very
   top of the panel and stays one line tall** — the busy label and the last
   operation's result are the first rows of the body. The result is a localized
   phrase ("Pushed", "Staged everything", "Switched to x"); git's own output (a
@@ -36,6 +39,18 @@ new-branch-from-base.
   new branch name + base-branch picker (local branches or full remote refs
   like `origin/feature/x`) — confirming creates the branch from the base and
   switches to it.
+- **Changes and recent commits are two cards**: a change row is "monospace path
+  + status chip" (path first, so the paths line up in a column; modified=amber,
+  added/untracked=green, deleted/conflict=red, renamed=blue; the file the diff
+  pane is showing is highlighted), a commit row is "short sha + subject". Each
+  card's header (`▾ Changes 12`) collapses the whole section and starts
+  **expanded** — a Git panel must not hide the user's own changes; a list past
+  8 / 5 rows offers "Show all N" at the bottom, which is a separate state, so the
+  chevron always points the right way.
+- **Refreshing never flashes**: clicking ↻ or any post-action re-read keeps the
+  panel's content (a same-workspace re-read does not fall back to a "loading"
+  line and snap back); the header's refresh button greys out and reads
+  "Refreshing…".
 - **Click a change to see its diff**: clicking any row of the change list grows
   the panel from its 400px single column into two panes — the full workbench on
   the left, that file's unified diff on the right (see *The diff viewer* below).
@@ -62,6 +77,10 @@ the first selection expands the list to its full length.
   panel (the workbench keeps its width) and the diff takes the rest, 1:1 with the
   pointer because the panel anchors its left edge on grab. Double-clicking the
   edge resets the width, and the panel always stays inside the viewport.
+- **A stable box while the diff is open**: selecting a file pins the panel's height
+  (both columns run to the bottom), so the diff arriving, switching files and
+  collapsing again only scroll inside the panes — the panel never resizes under
+  the pointer.
 - **Staged / unstaged**: by default the pane follows the data — unstaged when
   that side has anything, staged otherwise — with two chips to switch by hand
   (an empty side is dimmed). When a file has changes on both sides, one click
