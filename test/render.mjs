@@ -272,6 +272,109 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (unbound?.payload?.args?.sessionId !== undefined) throw new Error(`an unbound draft must omit sessionId: ${JSON.stringify(unbound)}`);
 }
 
+// The commit-message language setting: the gear sits in the header, the popover
+// is closed until it is pressed, the store is the single source of truth, and
+// only a language NAME ever reaches the endpoint.
+{
+  const { settingsView, LANGUAGE_PRESETS: presets, LANGUAGE_CUSTOM_ID: customId, LANGUAGE_STORAGE_KEY: storageKey } = mod.__internals;
+  if (typeof settingsView !== "function") throw new Error("client must expose settingsView for the render test");
+  if (storageKey !== "dsh-git.commitLanguage") throw new Error(`unexpected storage key: ${storageKey}`);
+  if (presets[0].id !== "auto" || presets[0].directive !== undefined) throw new Error("the first language entry must be auto with no directive");
+  if (presets.some((preset) => preset.id === customId)) throw new Error("custom must not be a preset with a fixed directive");
+
+  store.setPanelOpen(true);
+  const panelHtml = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  if (!panelHtml.includes('data-dsh-git="settings"')) throw new Error("the panel header must carry the settings button");
+  if (panelHtml.includes('data-dsh-git="settings-popover"')) throw new Error("the settings popover must start closed");
+
+  // The popover itself: SSR cannot click the gear, so it is rendered directly
+  // (the same reason outputView/sectionView are exported).
+  const popover = renderToStaticMarkup(React.createElement(settingsView, {
+    t: commonProps.t,
+    language: "auto",
+    customText: "",
+    onLanguage: () => {},
+    onCustomText: () => {},
+    onClose: () => {}
+  }));
+  for (const needle of ['data-dsh-git="settings-popover"', 'data-dsh-git="settings-language"', 'data-dsh-git="settings-close"', "settings.language.hint"]) {
+    if (!popover.includes(needle)) throw new Error(`settings popover missing ${JSON.stringify(needle)}: ${popover.slice(0, 400)}`);
+  }
+  for (const id of presets.map((preset) => preset.id).concat([customId])) {
+    if (!popover.includes(`value="${id}"`)) throw new Error(`settings select missing the ${id} entry`);
+    if (!popover.includes(`settings.language.${id}`)) throw new Error(`settings select missing the ${id} label`);
+  }
+  // The free-form field exists only behind the custom entry.
+  if (popover.includes('data-dsh-git="settings-language-text"')) throw new Error("the custom field must be hidden while a preset is selected");
+  const customPopover = renderToStaticMarkup(React.createElement(settingsView, {
+    t: commonProps.t,
+    language: customId,
+    customText: "Esperanto",
+    onLanguage: () => {},
+    onCustomText: () => {},
+    onClose: () => {}
+  }));
+  if (!customPopover.includes('data-dsh-git="settings-language-text"')) throw new Error("the custom entry must reveal the text field");
+  if (!customPopover.includes('value="Esperanto"')) throw new Error("the custom text must be echoed back into the field");
+
+  // The setting drives the endpoint: a preset sends its language NAME.
+  store.setGenerateLanguage("zh-CN");
+  if (store.getSnapshot().generateLanguage !== "zh-CN") throw new Error("the setting must be published on the shared state");
+  const zhDirective = store.languageDirective();
+  if (zhDirective !== "Simplified Chinese (简体中文)") throw new Error(`unexpected directive: ${JSON.stringify(zhDirective)}`);
+  await store.verbs.generateMessage("C:/repo", "staged", "alpha", "alpha-large", "s1", zhDirective);
+  let lastDraft = sent.filter((entry) => entry.endpoint === "generateMessage").pop();
+  if (lastDraft?.payload?.args?.language !== "Simplified Chinese (简体中文)") {
+    throw new Error(`the draft must carry the forced language: ${JSON.stringify(lastDraft)}`);
+  }
+
+  // `auto` sends no directive at all, so the host keeps its own rule.
+  store.setGenerateLanguage("auto");
+  if (store.languageDirective() !== undefined) throw new Error("auto must send no directive");
+  await store.verbs.generateMessage("C:/repo", "staged", undefined, undefined, undefined, store.languageDirective());
+  lastDraft = sent.filter((entry) => entry.endpoint === "generateMessage").pop();
+  if (lastDraft?.payload?.args?.language !== undefined) throw new Error(`auto must omit the language: ${JSON.stringify(lastDraft)}`);
+
+  // A custom name is used as typed (trimmed where it is read) and an empty
+  // field falls back to auto instead of failing the host's validation.
+  store.setGenerateLanguage(customId, "  Esperanto  ");
+  if (store.getSnapshot().generateLanguageText !== "  Esperanto  ") throw new Error("the custom text must be echoed verbatim into the field");
+  if (store.languageDirective() !== "Esperanto") throw new Error(`unexpected custom directive: ${JSON.stringify(store.languageDirective())}`);
+  store.setGenerateLanguage(customId, "   ");
+  if (store.languageDirective() !== undefined) throw new Error("an empty custom name must fall back to auto");
+  // An unknown id never becomes a directive.
+  store.setGenerateLanguage("not-a-language");
+  if (store.getSnapshot().generateLanguage !== "auto") throw new Error("an unknown preset id must fall back to auto");
+
+  // The setting is a user preference, not Session state: a full status re-read
+  // rebuilds every field from idleState() and must keep it.
+  store.setGenerateLanguage("zh-TW");
+  await store.refresh("C:/repo");
+  if (store.getSnapshot().generateLanguage !== "zh-TW") throw new Error("a re-read must keep the language setting");
+  store.setGenerateLanguage("auto");
+
+  // The popover lives inside the panel's own box and goes away with the panel.
+  // The open flag is store state (like `panelOpen`), which is what makes the
+  // "collapsed panel springs a stale popover back open" case testable at all.
+  store.setSettingsOpen(true);
+  if (store.getSnapshot().settingsOpen !== true) throw new Error("setSettingsOpen must publish the flag");
+  const openHtml = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  const backdropAt = openHtml.indexOf('data-dsh-git="settings-backdrop"');
+  const popoverAt = openHtml.indexOf('data-dsh-git="settings-popover"');
+  const bodyAt = openHtml.indexOf('data-dsh-git="changes"');
+  if (backdropAt === -1 || popoverAt === -1) throw new Error("an open settings popover must render inside the panel");
+  if (!(backdropAt < popoverAt && popoverAt < bodyAt)) {
+    throw new Error(`unexpected panel order: backdrop=${backdropAt} popover=${popoverAt} body=${bodyAt}`);
+  }
+  store.setPanelOpen(false);
+  if (store.getSnapshot().settingsOpen !== false) throw new Error("closing the panel must close the popover");
+  store.setPanelOpen(true);
+  const reopened = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  if (reopened.includes('data-dsh-git="settings-popover"')) throw new Error("a reopened panel must not show a stale popover");
+
+  console.log("settings: header entry, popover inside the panel, custom field, and the forced language reaching the endpoint");
+}
+
 // The store's act() resolves with the raw result and localizes a coded failure.
 {
   const ok = await store.act("generate", () => store.verbs.generateMessage("C:/repo", "staged"), (res) => ({ kind: res.ok ? "ok" : "error", text: res.ok ? "done" : "failed" }));

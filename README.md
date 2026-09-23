@@ -24,7 +24,8 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   （push 的 sideband banner、`LF will be replaced by CRLF` 这类提示）收在右侧的"详情 ▾"里，点开才展开，
   不会被变更列表和最近提交顶到看不见的地方。面板**可通过顶栏拖动**（按住带 Git 标题的
   那一行，拖到哪里就停在哪里，不会拖出视口；顶栏上的按钮/输入框不会触发
-  拖动；双击顶栏回到居中位置）。
+  拖动；双击顶栏回到居中位置）。顶栏右侧依次是 **⚙ 设置**（提交信息语言，
+  见下文「提交区与 AI 起草」）、**↻ 刷新**、**– 收起**。
   分支切换器旁边的"＋ 新建分支"按钮会展开一个内联表单：新分支名 + 基分支
   选择器（本地分支或 `origin/feature/x` 这样的完整远端引用）——确认后从
   该基分支创建新分支并切换过去。
@@ -83,6 +84,15 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   提交真正会记录的内容**——用其他依据生成的描述可能与实际提交不符。
 - **✨ AI 生成**：把选中的改动（diffstat + diff，截断后）交给当前会话所选
   模型，生成的提交信息直接填入输入框；不满意可改，也可以直接手写。
+- **提交信息语言（顶栏 ⚙ 设置）**：默认「自动」——让模型跟随仓库现有提交与
+  注释的语言（历史行为）。选中某个语言（简体中文 / 繁體中文 / English / 日本語 /
+  한국어 / Français / Deutsch / Español / Русский）或「自定义…」手填一个语言名后，
+  生成时会在 system prompt 里**强制**整条提交信息（主题 + 正文）只用该语言，
+  并明确写清它覆盖代码注释、历史提交与 diff 的语言——仓库注释是英文时，
+  「自动」会被它们带跑，这正是这个开关要解决的问题。设置存在浏览器的
+  `localStorage`（键 `dsh-git.commitLanguage`），对所有工作区生效、刷新后保留；
+  存储不可用时静默回落到「自动」。自定义语言名由宿主按形状与长度（≤ 60 字符、
+  无换行/引号/冒号等可自开规则的字符）校验，非法时报 `invalid-language`。
 
 生成用的模型路由取当前会话的 `modelSelection` 投影（待生效的选择优先，
 其次是上次实际使用），取不到时回落到宿主注册的第一条路由。请求会带上**当前会话 id**
@@ -183,7 +193,7 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
 | `push` | `{ cwd }` | `{ message }`（120s 超时） |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
-| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。`language` 是可选的**语言名**（顶栏 ⚙ 里的设置；缺失、`null`、空串与 `auto` 都表示「跟随仓库」），它会被写进 system prompt 强制整条信息只用该语言；形状或长度不合法（> 60 字符、含换行/引号/冒号等）报 `invalid-language`。失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
 
 > 失败结果的 `error.code` 在线路上固定为 `"internal"`（Connection 信封只要求它是字符串），
 > 插件自己的诊断码放在 `error.details.code`；客户端按该码做本地化文案。
@@ -237,7 +247,14 @@ dsh plugin --profile web remove @xia-sc/dsh-git
     diff 解析器（行号 / 分类 / `--` 开头的删除行）、行渲染、差异面板标题栏与
     `act()` 的结果回传/本地化（需要一份 react/react-dom，可用
     `DSH_GIT_REACT_ROOT` 指定，找不到则 SKIP）。
-  - 也提供 `npm test`（依次跑四个）。
+  - `node test/slot-mount.mjs` —— 用真实 `SlotCore`/`SlotRegistry` 与真渲染器把两个
+    座位挂起来（找不到宿主包则 SKIP）。
+  - `npm run test:ui:settings` —— **真实浏览器**离线回归（playwright-core + 本机
+    Chrome，既不需要 `dsh web` 也不需要认证）：脚本自己起回环 http 服务，用
+    React UMD 挂载客户端半边，真点 ⚙ 设置弹层、切换语言、验证 `localStorage`
+    持久化与「✨ AI 生成」请求里带的 `language`；截图落在
+    `test/ui/settings-popover.png`。
+  - 也提供 `npm test`（依次跑五个）。
   - `npm run test:commit` —— **端到端**：在临时仓库里真起 git，走插件的
     `/dsh-git-rpc/commit` 路由提交，再用 `git log --format=%B` 逐字节比对提交
     信息（多行、CRLF、中文、前导 `-`、shell 元字符等），并确认非法信息被拒且

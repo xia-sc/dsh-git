@@ -35,6 +35,9 @@ new-branch-from-base.
   (the top row with the Git title — press, drag, release; it stays where
   dropped and is clamped inside the viewport; header buttons/inputs never
   start a drag; double-click the header to snap back to center).
+  The header's right side is, in order, **⚙ Settings** (the commit-message
+  language — see "The commit area and AI drafting"), **↻ Refresh** and
+  **– Collapse**.
   A "＋ New branch" button beside the branch switcher opens an inline form:
   new branch name + base-branch picker (local branches or full remote refs
   like `origin/feature/x`) — confirming creates the branch from the base and
@@ -119,6 +122,20 @@ The commit area follows the real order of operations: **stage all → draft → 
 - **✨ AI draft**: sends the selected change set (diffstat + diff, truncated)
   to the model the current session has selected and drops the generated
   message into the input. Edit it, or just write your own.
+- **Commit-message language (⚙ in the header)**: `Auto` by default — the model
+  follows the language already used by the repository's commits and comments
+  (the historical behaviour). Pick one of the presets (简体中文 / 繁體中文 /
+  English / 日本語 / 한국어 / Français / Deutsch / Español / Русский) or
+  `Custom…` and type a language name, and the draft is **forced** to write the
+  whole message — subject and body — in that language, with the system prompt
+  saying outright that it overrides the code comments, the past commit subjects
+  and the diff. A repository whose comments are English is exactly what drags
+  "Auto" off course, which is what this switch is for. The choice lives in the
+  browser's `localStorage` (key `dsh-git.commitLanguage`), applies to every
+  workspace and survives a reload; when storage is unavailable it silently
+  falls back to `Auto`. A custom name is validated by the host for shape and
+  length (≤ 60 chars, no line feed, quote or colon that could open a prompt
+  rule of its own) and reports `invalid-language` when it does not fit.
 
 The model route comes from the current session's `modelSelection` projection
 (pending pick first, then last used), falling back to the host's first
@@ -237,7 +254,7 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
 | `push` | `{ cwd }` | `{ message }` (120s timeout) |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
-| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. `sessionId` is an optional non-empty string (over 200 chars is `invalid-session`); the panel sends the current session id so session-affine gateways can route the call. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. `sessionId` is an optional non-empty string (over 200 chars is `invalid-session`); the panel sends the current session id so session-affine gateways can route the call. `language` is an optional **language name** (the ⚙ setting; absent, `null`, an empty string and `auto` all mean "follow the repository") written into the system prompt to force the whole message into that language; a name that is too long (> 60 chars) or carries a line feed, quote or colon is `invalid-language`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
 
 > A failed result carries `error.code === "internal"` on the wire (the Connection
 > envelope only requires a string), with the plugin's own diagnostic in
@@ -298,7 +315,7 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 - The browser bundle is hand-written (no build step); edits to `lib/client.js`
   are picked up on refresh (no-cache), host-side edits need a `dsh web`
   restart.
-- Tests (`npm test` runs all four):
+- Tests (`npm test` runs all five):
   - `node test/smoke.mjs` — route, envelope, endpoint dispatch and input
     validation (no git spawn: the session sandbox blocks child-process piped
     stdio);
@@ -313,6 +330,14 @@ shell metacharacters, and leading dashes are all recorded verbatim.
     removed line starting with `--`), the row renderer, the diff pane's header,
     and `act()`'s result plumbing and localization (needs a react/react-dom copy,
     e.g. via `DSH_GIT_REACT_ROOT`; SKIPs without one).
+  - `node test/slot-mount.mjs` — mounts both seats on the real
+    `SlotCore`/`SlotRegistry` with the real renderer (SKIPs without a host profile).
+  - `npm run test:ui:settings` — **real browser** offline regression
+    (playwright-core + local Chrome; needs neither `dsh web` nor authentication):
+    the script serves this checkout over loopback, mounts the client half with the
+    React UMD build, and then really clicks the ⚙ settings popover, switches the
+    language, and checks both the `localStorage` persistence and the `language`
+    the draft request carries; it writes `test/ui/settings-popover.png`.
 - `npm run test:commit` — **end-to-end**: really spawns git in a throwaway
   repository, commits through the plugin's own `/dsh-git-rpc/commit` route, and
   reads the message back with `git log --format=%B` (multi-line, CRLF, non-ASCII,

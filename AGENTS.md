@@ -26,7 +26,7 @@
 | `test/render.mjs` | 双界面真实 React SSR：两个座位、提交区控件、diff 解析器与行渲染、`act()` 回传 | 需要 `react`/`react-dom`，见 §5 |
 | `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、重命名配对、删除、二进制、截断、校验） | 需要 spawn git，不在 `npm test` 内 |
 | `test/commit.mjs` | **端到端**：真临时仓库走 `commit` 端点，用 `git log --format=%B` 逐字节比对 | 同上 |
-| `test/ui/*.mjs` | 手动浏览器脚本（playwright-core 打真实 GUI），`verify-diff.mjs` 是差异面板的回归 | 需要认证 URL，见 §8 |
+| `test/ui/*.mjs` | 浏览器脚本（playwright-core + 本机 Chrome）：`verify-diff.mjs` 打真实 GUI 回归差异面板；`verify-settings.mjs` 自己起本地 http 服务、离线喂真实 React UMD + 真 `localStorage` 驱动设置弹层与语言（无需认证），并落 `test/ui/settings-popover.png` | `verify-diff.mjs` 需要认证 URL，见 §8；`verify-settings.mjs` 不需要 |
 | `COMPAT.md` | 宿主版本兼容性笔记：每条按「症状 → 证据 → 根因 → 修法 → 守护测试」记，外加换版后的排查顺序 | 换版/静默失效时先读它；版本故事只写这里 |
 | `.github/workflows/publish.yml` | 唯一一条 CI：推 `vX.Y.Z` tag → 校验 tag 与 `package.json` 一致 → `npm test` → `npm publish --provenance`（OIDC trusted publishing；没登记时用 `NPM_TOKEN` secret） | 不装依赖、不打包（§3.1）；认证的一次性配置见 §7 |
 
@@ -41,6 +41,7 @@ $env:DSH_GIT_REACT_ROOT = "<含 react 与 react-dom 的 node_modules>"   # rende
 node test/render.mjs
 node test/ui/verify-diff.mjs            # 默认 fixture 拦截，验证客户端半边
 $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需先重启 dsh web）
+node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 localStorage 点设置弹层（不需认证）
 ```
 
 没有 lint、没有 typecheck、没有 PR 检查（`.github/` 里只有一条发布 workflow，见 §7）；
@@ -141,7 +142,8 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   `panel-resize`、`output`、`output-toggle`、`output-detail`、`changes`、`changes-header`、`changes-body`、
   `changes-more`、`log`、`log-header`、`log-body`、`log-more`、`change-row`、`diff`、`diff-header`、`diff-body`、
   `diff-row`、`diff-close`、`diff-wrap`、`diff-copy`、`diff-reload`、`diff-scope-worktree`、`diff-scope-index`、
-  `diff-empty`、`diff-binary`、`diff-untracked`；行还有 `data-kind`、选中行有 `data-active`。
+  `diff-empty`、`diff-binary`、`diff-untracked`、`settings`、`settings-backdrop`、`settings-close`、
+  `settings-popover`、`settings-language`、`settings-language-text`；行还有 `data-kind`、选中行有 `data-active`。
 - **列表区块是两张卡片**（`sectionView`）：标题行 = chevron + 文案 + 计数胶囊，整段折叠；`all=false` 时只显示
   前 `CHANGES_PREVIEW`/`LOG_PREVIEW` 行并在底部给「显示全部 N 项」。**折叠与展开预览是两个 state**
   （`changesOpen`/`changesAll`），别合并回一个——合并过的那版箭头在"列表明明在屏幕上"时指向"收起"，就是
@@ -176,8 +178,16 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
   （Gitee 甚至先发一个截断的 `ESC[0`），DOM 里没有字形可渲染，只剩 `[0[01;33m` 这种参数当正文显示。
   只剥 `value.message` / `error.message`，**diff body 与路径一律不动**（内容必须逐字节保真）。
 - `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`、
-  `stripAnsiEscapes`、`outputView`、`sectionView`、`changeTagStyle`、`panelBoxStyle`、`DIFF_PANEL_HEIGHT`、
-  `sessionModelRoute`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
+  `stripAnsiEscapes`、`outputView`、`settingsView`、`LANGUAGE_PRESETS`、`sectionView`、`changeTagStyle`、
+  `panelBoxStyle`、`DIFF_PANEL_HEIGHT`、`sessionModelRoute`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
+- **提交信息语言是用户偏好，不是会话状态**：`generateLanguage`/`generateLanguageText` 由 store 持有并写进
+  `localStorage`（键 `dsh-git.commitLanguage`，通过 `window.localStorage` 访问，Node 的实验性全局会刷警告），
+  `idleState()` 每次重建状态时从闭包变量重新发布——在 `idleState()` 里写死 `auto` 会让任何一次 `status`
+  重读把设置悄悄清掉。弹层开关 `settingsOpen` 也放 store（和 `panelOpen` 同源，`setPanelOpen(false)`
+  会一并关掉它）：收起面板时组件仍挂载、只是渲染 null，把它放在 useState 里会让弹层在下次展开时自己弹回来。
+  面板只把 `languageDirective()` 算出的**语言名**交给端点，宿主 `readLanguage()`
+  校验形状（≤ 60 字符、首字符是字母/数字、无换行/引号/冒号）后，用它**替换** system prompt 里那条
+  「跟随仓库」规则——两条必须二选一，并列的话英文注释的仓库会把强制语言带跑。
 - **AI 起草的请求必须带会话身份**：面板把 `state.sessionId` 交给 `generateMessage` 端点，宿主放进
   `GenerateOptions.sessionId`——部分网关（opencode 系）要求会话亲和头，而宿主只在请求带 `sessionId` 时
   才转给适配器。模型路由由 `sessionModelRoute()` 从**两个投影面**取（行上的 `projectionValues` 与
@@ -198,6 +208,8 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 - UI 脚本用 `playwright-core` + 本机 Chrome（`node_modules` 是 gitignore 的，`npm install --no-save playwright-core`
   即可），靠 `data-dsh-git` 钩子定位。`test/ui/verify-diff.mjs` 默认拦截 `/dsh-git-rpc/diff` 用 fixture 验证客户端，
   `DSH_GIT_UI_LIVE=1` 才打真端点；`DSH_GIT_UI_WORKSPACE` 选工作区，`DSH_GIT_UI_URL`/`DSH_GIT_UI_STORAGE_STATE` 过认证。
+  `test/ui/verify-settings.mjs`（`npm run test:ui:settings`）既不需要 dsh web 也不需要认证：它自己起回环 http 服务，
+  用 React UMD 把客户端半边挂进真 Chrome，于是纯客户端交互（弹层开关、select、`localStorage`、请求载荷）可以真点。
 - 测 git 行为要**真起 git**：临时仓库、`core.autocrlf=false`、`mkdtemp` + `finally rm`。重命名这类事只有真 git
   能暴露（只给新路径的 pathspec 会退化成整文件新增），别用 mock 假装。
 - **门禁是跨平台的，CI 跑 `ubuntu-latest`**：`test/smoke.mjs` 里的 `cwd` 一律用 `join(tmpdir(), …)` 造绝对路径
@@ -212,6 +224,8 @@ $env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需�
 2. 改了宿主半 → `npm run test:diff` / `test:commit`；再请用户重启 `dsh web` 后在真实 GUI 里点一遍。
 3. 改了浏览器半 → 刷新页面，用 playwright（MCP 浏览器或 `test/ui/*.mjs`）真点一遍：开面板 → 点变更行 → 看
    `[data-dsh-git="diff"]` 是否出现、行数/`+N −M` 是否与 `git diff --numstat` 一致 → 再点收起 → 拖右边缘 → 双击复位。
+   设置相关的改动直接 `npm run test:ui:settings`（离线真点）；在真实 GUI 里再顺手走一遍：开面板 → 点 ⚙ →
+   选语言 → 刷新页面确认设置还在 → 关弹层 → 点「✨ AI 生成」看是否按所选语言出结果。
 4. 改了两栏/宽度相关的常量 → 量一遍真实像素（面板宽 = 左栏 + 边框 + diff；拖 120px 就应正好变 120px）。
 5. 动了界面 → 顺手更新 `test/ui/*.png` 截图（仓库里就是提交这几个截图的）。
 
