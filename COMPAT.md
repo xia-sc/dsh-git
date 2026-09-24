@@ -194,7 +194,7 @@ diff 面板、信封 schema 全部在真宿主/真浏览器里验过）。本节
   （内置 QueueDock 同款写法）。该变量是 ui-conversation 的内部变量，0.1.7 还多了一套 embedded 值；
   改名不会报错，只会静默退回 778px。
 
-### 4.7 环境噪声（§3 的具体数字）
+### 4.7 环境噪声（§3 的具体数字；**已过期，见 §5.3**）
 
 - profile 的 `@deepseek-ai` 共 258 项，其中 **17 个悬空 junction**，指向三个根：
   `nvm\v26.9.0`（244）、`nvm\v22.23.1`（8）、`D:\tool\npm\cache\_npx\1e7f6d9597241db0`（5）。
@@ -203,3 +203,98 @@ diff 面板、信封 schema 全部在真宿主/真浏览器里验过）。本节
   `node_modules/react`（打印 `react from (node resolution)`）——**它没跑在 shell 真正 seed 的那份 React 上**。
 - `profiles/web/node_modules/@deepseek-ai` 是**空目录**：`test/host-mount.mjs` 的 `findDshRoot()`
   是靠第二个候选根（`profiles/node_modules`）才找到宿主包的。
+
+## 5. dsh ≥ 0.1.7-rc.1
+
+2026-09 全量审计（插件 0.7.0 × 宿主 0.1.7-rc.1）：**零回归，不需要为换版改代码**。
+宿主半挂载并持有围栏（活体探针 401，对照路径 404/405）、浏览器半在 rc.1 的客户端 boot 图里且送达字节与
+`lib/client.js` **逐字节相同**、两个座位在真 `SlotRegistry` 上注册成功、AI 起草链路的每个宿主契约逐项吻合、
+默认门禁与两个端到端 git 套件全绿。完整证据（含逐项文件行号）见仓库里的 `AUDIT-0.1.7-rc.1.md`。
+
+体例同上，但这一版**没有"症状"**：下面记的是"再改回去就会静默坏"的判据、本轮实测到的漂移，以及新增的守护。
+
+### 5.1 已复核、必须保持的耦合
+
+- **路由仍是自持的**：外部插件调 `ctx.connection.rpc.handle()` 在 rc.1 依旧抛
+  `cannot get property "webServer" without inject`（该插件 `inject` 只有 `["credentials"]`，
+  靠内层 `ctx.inject(["webServer"], …)` 取路由）。**§2 的设计继续必需，不要改回去。**
+- **`webServer.register` 的 route 没有 `method` 字段**：rc.1 的 `WebRoute` 只有 `{kind, path, handler}`，
+  `kind` 取 `exact`/`prefix`，前缀匹配是 `pathname === prefix || startsWith(prefix + "/")`。
+  插件自己判 `req.method !== "POST"`，与之一致。
+- **围栏返回的是数字**：`connection.requestRejection(req)` 的类型是 `401 | 403 | undefined`
+  （不可信来源 403、未认证 401）。`res.statusCode = rejection` 必须按 number 用——若将来宿主改成返回字符串，
+  这里会**静默**写出非法状态码。
+- **失败信封必须带 record 型 `details`**：浏览器侧是**手写**校验（不是 zod），除 `type`/`rpcId` 外还要求
+  `isRecord(error.details)`。`fail()` 恒给对象、所有 `rpcError(...)` 调用点都传对象，才不至于被浏览器判成
+  "invalid server-response failure"。
+- **`dsh.client.inject` 是"信息性包名依赖"，不是服务注入**：宿主类型注释明写，且未命中的包名**静默跳过**。
+  真正的静默失效路径是客户端自己导出的 `inject = ["slots","connection","locale"]`（服务名）：
+  缺提供者时 fiber 被 park，**胶囊与面板一起消失**。
+- **`retainedBy.mainView` 未改名**：rc.1 的 `dsh-client-ui-session` 自己就写
+  `(…retainedBy.mainView ?? 0) > 0`。`byId[].cwd` / `retainedBy` / `projectionValues` /
+  `projectionsBySession[id].values` / `modelSelection{lastUsed,next}` 的形状逐字一致（§1、§4.3 判据不变）。
+- **LLM 一次性调用**：`GenerateOptions` 字段、`RequestUserInput`（无 `id`/`source`）、
+  `StreamChunk`(`text-delta`/`block-end`/`finish`)、`FinishReasonMap`、`sessionId` 的适配器转发全部不变
+  （§4.1、§4.2 继续成立）。
+- **`llm` 仍不是必需启动项**：它起不来时本行一直 PENDING，两个界面**静默消失**而 `dsh web` 自身正常
+  （§4.5 继续成立；排查先看 stderr）。
+
+### 5.2 本轮实测到的漂移（都不是回归，勿误判为换版坏了）
+
+- **胶囊对齐落后于 rc.1 的新变量**：composer 新增 `--dsh-composer-dock-inset: 8px` 与
+  `--dsh-composer-side-clearance: 16px`；宿主的 dock 占用者（QueueDock）用
+  `width: calc(100% - 2*clearance - 2*inset)` / `max-width: calc(card-max-width - 2*inset)`，
+  而胶囊只按 `max-width: var(--dsh-composer-card-max-width)` 对齐 → **实测宽 16px**（窄列最多 32px）。
+  因此 **§4.6 里"胶囊是内置 QueueDock 同款写法"这句已不准确**；另，胶囊的 `778px` 兜底只是真实区间
+  （712–952px）里的一个值，别当成真值。
+- **面板高度仍是实测值**：`bottom: 168` 与 `DIFF_PANEL_HEIGHT` 里的 `184px` 一起动（§4.6）。
+  **已知边界**：该静态 `bottom` 只对空/单行草稿成立——宿主文本区上限
+  `--dsh-composer-text-max-height: 336px` 会让 composer 栈长到约 430px，而 shell overlay 层是
+  `z-index: 20`、composer 座位是 `auto`，于是**多行草稿时面板会盖住输入框**。这是既有设计局限
+  （168 与 30 都是插件自己的常量），不是换版引入。
+- **主题 token 零退化**：插件用到的 17 个（16 个 `--dsw-alias-*` + `--dsw-shadow-lv2`）rc.1 全部定义，
+  亮/暗各一条；别名表 79 → 90 **只增不改**；§4 点名过的三个"不存在的名字"插件侧已清干净。
+
+### 5.3 环境事实（**取代 §4.7 的旧数字**）
+
+- `profiles/node_modules/@deepseek-ai` 现为 **241 项，全部是可解析的 junction，无一悬空**，指向
+  `D:\software\nvm\nvm\v26.9.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai`（**276 项**）；
+  另一份同版本拷贝在 `D:\software\nodejs\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai`。
+- **`dsh-client-ui-slots` 等 35 个包只在上面那棵嵌套树里**，不再有 profile 顶层链接——
+  dsh 把自己的嵌套依赖留在 CLI 树内。`test/slot-mount.mjs` 的 `addVendoredRoots()` 就是为此兜底。
+- `profiles/web/node_modules/@deepseek-ai` 仍是**空目录**；运行中的 `dsh web` 由
+  `D:\software\nodejs\...\dsh\lib\bin.js` 启动（同为 0.1.7-rc.1），而 profile 的 junction 指向 nvm 那棵。
+- `react`/`react-dom` 仍从插件自己的 `node_modules` 解析（`test/render.mjs` 打印 `react from (node resolution)`）。
+- **`glob`/`grep` 不跟随 junction**：对 profile 下的 `@deepseek-ai` 会给出"文件不存在"的**假结论**
+  （踩过：据此误判 `dsh-client-ui-slots` 已从 rc.1 消失）。取证要用真实路径复核。
+
+### 5.4 本轮加固的守护
+
+- **`test/slot-mount.mjs`：`slots` 的版本探测改为可选。** 它原来与必需依赖同在一个 `try` 里，
+  一旦解析不到就把整个浏览器半守护退化成 `SKIP` + exit 0——**已实测复现**（让 `locate()` 拒绝该 spec，
+  旧代码打印 `SKIP: …` 并 exit 0），即"防静默失效的守护自己静默失效"。现在解析不到只打印 `slots@?`
+  并继续，由 renderer 自己的 `require("@deepseek-ai/dsh-client-ui-slots")` **响亮失败**（实测 exit 1）；
+  "没有 profile → SKIP" 的契约不变（实测 exit 0）。
+- 反证配方仍有效：`DSH_GIT_SLOT_FIXTURE=embedded node test/slot-mount.mjs` 在 rc.1 上**失败 9 项**
+  （默认夹具全过）——绿灯不是空转。
+- **`test/ui/verify-diff.mjs`：live 模式不再被夹具内容绑死。** 它此前把夹具独有的形状当成断言，
+  于是 `DSH_GIT_UI_LIVE=1` 在**任何普通工作树上必红**（实测 3 项失败），而 AGENTS §6 恰恰把 live 模式
+  列为维护步骤。现在：内容形状断言只在 fixture 模式跑；两种模式都新增一条**内容无关**的一致性断言
+  （头部的 `+N −M` 必须等于实际画出的行数）；换行三连在真 diff 没有超宽行时跳过并打印 NOTE；
+  live 模式不再覆盖 `test/ui/diff-panel.png`（那是 fixture 的参考图）。反证：删掉夹具里那两行特征后，
+  fixture 模式仍报 3 项失败——断言没被改空。
+
+### 5.5 本轮在真宿主 / 真浏览器上的实测（换版后照这个顺序验）
+
+- **启动图**：带 token 的 `GET /` 里 `__DSH_BOOT__` 有 `@xia-sc/dsh-git`（落 `application` 批），
+  其 `rev` 与按 `artifactRevision()`（mtime/ctime/size 的 framed sha1）复算 `lib/client.js` 的值**相同**。
+- **送达字节**：`GET /plugins/??@xia-sc/dsh-git/client.js&rev=<rev>` 的返回体与 `lib/client.js`
+  **逐字节相同**，仅多 72 字节的 sourcemap 尾巴。
+- **已认证端点**：`status`/`log`/`branches`/`diff` 全 200 且数据正确；失败走 `error.code="internal"`
+  + `details.code`（实测 `invalid-cwd`）；`diff` 的 `index` 侧为 0 —— 只读端点确实只读。无 cookie 仍 401
+  （对照：未知路径 GET 404 / POST 405，`/api` 401）→ 401 是**路由级**的。
+- **真浏览器**：fixture 与 live 两种模式**都通过**（胶囊 → 面板 → 点变更行 → 两栏 → 拖 120px →
+  双击复位 → 换行开关 → 收回单栏，无 `pageerror`）。live 模式下另做交叉核对：面板画出的
+  `add/del/hunk/fileHeader/noNewline` 与真端点原始 diff 按插件规则数出的值**完全一致**。
+- 上一轮 alpha.1 审计**没能跑通**这段（当时工作区干净，fixture 模式在"变更行"处提前退出），
+  所以这是第一次端到端实测覆盖到"真浏览器 + 真端点"。

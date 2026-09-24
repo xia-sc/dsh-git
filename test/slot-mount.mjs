@@ -50,6 +50,14 @@
 // assertion here is unobservable, so this file prints `SKIP: …` and exits 0.
 // It never fails for a missing profile.
 //
+// SKIP covers "no profile" ONLY — never "the profile is there but a piece of
+// the host could not be resolved". That distinction matters: this file exists
+// to catch silent host-side regressions, so a resolution failure on a machine
+// that DOES have a profile must stay loud. Concretely, the cosmetic
+// `dsh-client-ui-slots` version probe is optional (prints `slots@?`), and the
+// renderer's own `require("@deepseek-ai/dsh-client-ui-slots")` then fails the
+// run if the package really is gone. See the probe's comment below.
+//
 // SSR is not a browser
 // --------------------
 // `react-dom/server` runs no effects, so the pill's own `useEffect(() =>
@@ -199,10 +207,27 @@ try {
   reactDom = locate("react-dom");
   reactDomServer = locate("react-dom/server");
   dshVersion.renderer = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-renderer/package.json").file, "utf8")).version;
-  dshVersion.slots = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-slots/package.json").file, "utf8")).version;
 } catch (error) {
   skip(error.message);
 }
+
+// The slots VERSION is cosmetic — it rides only the banner printed at the end of
+// this file — so it must never gate the run. It used to sit inside the `try`
+// above, which made a host packaging change that stopped vendoring
+// `@deepseek-ai/dsh-client-ui-slots` (it moved from a top-level profile link to
+// a nested dependency of the dsh CLI in 0.1.7-rc.1, reached here only through
+// the `addVendoredRoots` fallback above) collapse into `SKIP` + exit 0 — a guard
+// against silent failure failing silently. Verified before the change: forcing
+// `locate()` to refuse that one spec printed `SKIP: …` and exited 0. Now the
+// version merely prints as `?` and the run continues; if the package is
+// genuinely absent, the renderer's own
+// `require("@deepseek-ai/dsh-client-ui-slots")` fails loudly instead.
+try {
+  dshVersion.slots = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-slots/package.json").file, "utf8")).version;
+} catch {
+  dshVersion.slots = "?";
+}
+
 if (!existsSync(react.file) || !existsSync(reactDom.file)) {
   skip("react/react-dom are not installed for this checkout");
 }

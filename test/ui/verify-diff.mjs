@@ -11,6 +11,20 @@
 // the interception and read the real endpoint instead — that also needs the
 // host half loaded, i.e. a `dsh web` restart after editing lib/index.js.
 //
+// What each mode asserts (they differ on purpose)
+// -----------------------------------------------
+// Structural checks — two panes, the resize handle, the panel following the drag
+// 1:1, wrap toggling, and the header naming the clicked file with a `+N −M` that
+// matches the rows actually drawn — run in BOTH modes, because none of them
+// depends on what the body says. The content-shape checks (two hunks, three
+// additions, a removed line whose own text starts with `--`, exactly one
+// no-newline marker) describe the FIXTURE, so they run in fixture mode only:
+// asserting them live made `DSH_GIT_UI_LIVE=1` fail on any ordinary working tree.
+// By the same rule the wrap trio is skipped live when the real diff holds no line
+// wide enough to scroll, and the committed `diff-panel.png` is written in fixture
+// mode only (a live screenshot would picture whatever the working tree happened
+// to hold, and would then be committed by accident).
+//
 // The workspace it binds to is chosen the same way the panel is: whatever the
 // session's cwd is. Point DSH_GIT_UI_WORKSPACE at a workspace NAME in the picker
 // (default "dsh-git") when the session starts somewhere that is not a repository.
@@ -189,14 +203,30 @@ try {
   const parsed = await rows();
   check("the pane rendered rows from the diff", parsed.total > 0, JSON.stringify(parsed).slice(0, 200));
   if (parsed.total > 0) {
+    // Content-independent, so they hold in BOTH modes: any real single-file diff
+    // carries the `diff --git` banner plus the `index`/`---`/`+++` lines, and the
+    // pane's own `+N −M` must equal the rows it drew.
     check("file headers are recognized", parsed.fileHeader >= 4, String(parsed.fileHeader));
-    check("hunks are recognized", parsed.hunk >= 2, String(parsed.hunk));
-    check("added rows are counted and marked", parsed.add >= 3, String(parsed.add));
-    check("removed rows are counted and marked", parsed.del >= 2, String(parsed.del));
-    check("a removed line starting with `--` is a change, not a header", parsed.hasRemovedDashDash === true);
-    check("the no-newline marker survives", parsed.noNewline === 1, String(parsed.noNewline));
+    const headerCounts = /[+](\d+) [−-](\d+)/.exec(parsed.header);
+    check("the header shows +/- counts", headerCounts !== null, parsed.header);
+    check(
+      "the header's +/- counts match the rows drawn",
+      headerCounts !== null && Number(headerCounts[1]) === parsed.add && Number(headerCounts[2]) === parsed.del,
+      `header ${headerCounts === null ? "?" : `${headerCounts[1]}/${headerCounts[2]}`} vs rows ${parsed.add}/${parsed.del}`
+    );
     check("the header names the file that was clicked", parsed.header.includes(clickedFile), `${JSON.stringify(clickedFile)} vs ${parsed.header}`);
-    check("the header shows +/- counts", /[+]\d+ [−-]\d+/.test(parsed.header), parsed.header);
+
+    // The remaining shapes describe the FIXTURE (two hunks, three additions, a
+    // removed line whose own text starts with `--`, exactly one no-newline
+    // marker). Real content has no obligation to look like that, so asserting
+    // them live made `DSH_GIT_UI_LIVE=1` fail on any ordinary working tree.
+    if (!live) {
+      check("hunks are recognized", parsed.hunk >= 2, String(parsed.hunk));
+      check("added rows are counted and marked", parsed.add >= 3, String(parsed.add));
+      check("removed rows are counted and marked", parsed.del >= 2, String(parsed.del));
+      check("a removed line starting with `--` is a change, not a header", parsed.hasRemovedDashDash === true);
+      check("the no-newline marker survives", parsed.noNewline === 1, String(parsed.noNewline));
+    }
   }
 
   if (!live) {
@@ -221,16 +251,23 @@ try {
       return { overflowX: body.scrollWidth - body.clientWidth, rowHeight: longest === null ? 0 : Math.round(longest.getBoundingClientRect().height) };
     });
     const unwrapped = await overflow();
-    check("an unwrapped long line scrolls sideways", unwrapped.overflowX > 0, JSON.stringify(unwrapped));
-    await page.locator('[data-dsh-git="diff-wrap"]').click();
-    await page.waitForTimeout(500);
-    const wrapped = await overflow();
-    check("wrapping removes the sideways scroll", wrapped.overflowX === 0, JSON.stringify(wrapped));
-    check("wrapping grows the row to several lines", wrapped.rowHeight > unwrapped.rowHeight, `${unwrapped.rowHeight} -> ${wrapped.rowHeight}`);
-    await page.locator('[data-dsh-git="diff-wrap"]').click();
-    await page.waitForTimeout(500);
-    const back = await overflow();
-    check("turning wrapping off restores the scroll", back.overflowX === unwrapped.overflowX, JSON.stringify(back));
+    if (unwrapped.overflowX === 0) {
+      // Real (live) content may hold no line wide enough to overflow the pane,
+      // and then wrapping has nothing to demonstrate. The fixture always
+      // overflows, so this only relaxes `DSH_GIT_UI_LIVE=1`.
+      console.log(`NOTE: the live diff has no line wide enough to scroll (rowHeight ${unwrapped.rowHeight}); wrap checks skipped`);
+    } else {
+      check("an unwrapped long line scrolls sideways", unwrapped.overflowX > 0, JSON.stringify(unwrapped));
+      await page.locator('[data-dsh-git="diff-wrap"]').click();
+      await page.waitForTimeout(500);
+      const wrapped = await overflow();
+      check("wrapping removes the sideways scroll", wrapped.overflowX === 0, JSON.stringify(wrapped));
+      check("wrapping grows the row to several lines", wrapped.rowHeight > unwrapped.rowHeight, `${unwrapped.rowHeight} -> ${wrapped.rowHeight}`);
+      await page.locator('[data-dsh-git="diff-wrap"]').click();
+      await page.waitForTimeout(500);
+      const back = await overflow();
+      check("turning wrapping off restores the scroll", back.overflowX === unwrapped.overflowX, JSON.stringify(back));
+    }
   }
 
   // Dragging the panel's right edge resizes the diff (the workbench keeps its
@@ -261,7 +298,13 @@ try {
   const closed = await width();
   check("clicking the active row folds the pane away", closed.diff === 0 && closed.panel === collapsed.panel, JSON.stringify(closed));
 
-  await page.screenshot({ path: fileURLToPath(new URL("./diff-panel.png", import.meta.url)) });
+  // The committed screenshot is the FIXTURE's rendering; a live run would
+  // overwrite it with whatever the working tree happened to contain.
+  if (live) {
+    console.log("NOTE: live mode leaves test/ui/diff-panel.png untouched (it is the fixture-mode reference).");
+  } else {
+    await page.screenshot({ path: fileURLToPath(new URL("./diff-panel.png", import.meta.url)) });
+  }
   check("no page error was raised", pageErrors.length === 0, pageErrors.join(" | "));
 } finally {
   await browser.close();
