@@ -4,12 +4,14 @@
 // with the browser's own Chrome, and needs playwright-core somewhere on the
 // require path (the other scripts in this directory make the same assumption).
 //
-// By default it INTERCEPTS /dsh-git-rpc/diff and answers with fixtures, so it
-// verifies the client half on its own: request shape, response handling, the
-// parsed rows, the staged/unstaged switch, the untracked notice, the right-edge
-// resize, and the panel growing from one column to two. Set DSH_GIT_UI_LIVE=1 to skip
-// the interception and read the real endpoint instead — that also needs the
-// host half loaded, i.e. a `dsh web` restart after editing lib/index.js.
+// By default it INTERCEPTS every /dsh-git-rpc/* call the panel makes (status,
+// log, branches, diff) and answers with fixtures, so it verifies the client half
+// on its own — and independently of what the session's working tree happens to
+// contain: request shape, response handling, the parsed rows, the staged/unstaged
+// switch, the right-edge resize, and the panel growing from one column to two.
+// Set DSH_GIT_UI_LIVE=1 to skip the interception and read the real endpoints
+// instead — that also needs the host half loaded, i.e. a `dsh web` restart after
+// editing lib/index.js.
 //
 // What each mode asserts (they differ on purpose)
 // -----------------------------------------------
@@ -28,6 +30,14 @@
 // The workspace it binds to is chosen the same way the panel is: whatever the
 // session's cwd is. Point DSH_GIT_UI_WORKSPACE at a workspace NAME in the picker
 // (default "dsh-git") when the session starts somewhere that is not a repository.
+// That picker belongs to the CLI/`dsh web` shell; the 0.2 desktop shell replaced
+// it with a sidebar list, so there the run leans on the session's own cwd (in
+// fixture mode `status` always reports a repository) and says so rather than
+// failing on a selector that no longer exists.
+//
+// Host shells also differ in first-run chrome: the 0.2 desktop app opens with a
+// preview-notice overlay whose only button is 继续 and which sits on top of the
+// composer (Escape does not close it), so it is dismissed before anything clicks.
 //
 // A fresh browser is NOT authenticated: `dsh web` fences the GUI behind a
 // one-time token it prints on startup, so pass either
@@ -74,6 +84,39 @@ const STAGED = [
   " 正文"
 ].join("\n");
 
+// The other endpoints the panel calls while it binds a session. Fixture mode
+// answers these too: `status` is what decides whether the pill renders at all
+// and which change rows the list holds, so leaving it real would make the whole
+// run depend on the session's working tree being dirty — and on its cwd being a
+// repository — which is exactly how this script failed on a clean tree.
+const STATUS = {
+  repo: true,
+  branch: "verify-ui",
+  detached: false,
+  oid: "0".repeat(40),
+  upstream: "origin/verify-ui",
+  ahead: 1,
+  behind: 0,
+  dirty: 2,
+  changes: [
+    { status: "modified", path: "README.md", index: " ", worktree: "M", file: "README.md", origFile: null },
+    { status: "untracked", path: "test/diff.mjs", index: "?", worktree: "?", file: "test/diff.mjs", origFile: null }
+  ]
+};
+const LOGFIX = {
+  repo: true,
+  commits: [
+    { sha: "1111111", author: "verify", subject: "fixture commit one", refs: "HEAD -> verify-ui" },
+    { sha: "2222222", author: "verify", subject: "fixture commit two", refs: null }
+  ]
+};
+const BRANCHES = {
+  repo: true,
+  current: "verify-ui",
+  local: [{ name: "verify-ui", current: true, upstream: "origin/verify-ui", sha: "1111111" }],
+  remote: [{ name: "origin/verify-ui", short: "verify-ui" }]
+};
+
 let failures = 0;
 function check(label, condition, detail) {
   if (condition) return;
@@ -91,27 +134,43 @@ page.on("pageerror", (error) => pageErrors.push(error.message));
 
 try {
   if (!live) {
-    await page.route("**/dsh-git-rpc/diff", async (route) => {
-      const req = JSON.parse(route.request().postData() ?? "{}");
+    // One handler for the whole channel. The panel's bootstrap calls decide what
+    // this run even sees, so `status` (and the two list reads) are answered from
+    // fixtures as well; only `diff` was intercepted before, which tied every
+    // assertion to a dirty working tree.
+    await page.route("**/dsh-git-rpc/*", async (route) => {
+      const request = route.request();
+      const endpoint = new URL(request.url()).pathname.split("/").pop();
+      let req = {};
+      try {
+        req = JSON.parse(request.postData() ?? "{}");
+      } catch {
+        // A body this test does not send is not its concern; answer the envelope anyway.
+      }
       const args = req?.payload?.args ?? {};
-      const untracked = String(args.path ?? "").includes("diff.mjs");
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          type: "server-response",
-          rpcId: req.rpcId,
-          result: { ok: true, value: {
-            repo: true,
-            path: args.path,
-            origPath: null,
-            untracked,
-            skipped: 0,
-            worktree: { diff: WORKTREE, binary: false, truncated: false },
-            index: { diff: untracked ? "" : STAGED, binary: false, truncated: false }
-          } }
-        })
-      });
+      const answer = (value) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ type: "server-response", rpcId: req.rpcId, result: { ok: true, value } })
+        });
+      if (endpoint === "status") return answer(STATUS);
+      if (endpoint === "log") return answer(LOGFIX);
+      if (endpoint === "branches") return answer(BRANCHES);
+      if (endpoint === "diff") {
+        const untracked = String(args.path ?? "").includes("diff.mjs");
+        return answer({
+          repo: true,
+          path: args.path,
+          origPath: null,
+          untracked,
+          skipped: 0,
+          worktree: { diff: WORKTREE, binary: false, truncated: false },
+          index: { diff: untracked ? "" : STAGED, binary: false, truncated: false }
+        });
+      }
+      // fetch/pull/push/stage/commit/... are not exercised by this script.
+      return answer({});
     });
   }
 
@@ -128,10 +187,37 @@ try {
     process.exit(2);
   }
 
-  // The panel is bound to the session's cwd: pick a workspace that is a git
-  // repository before looking for the dock pill.
+  // First-run chrome on the 0.2 desktop shell: a preview-notice overlay whose
+  // only button is 继续/Continue sits on top of the composer, so every click
+  // below would be refused as "intercepted pointer events" (Escape does not
+  // close it). Dismissing it here keeps the suite working on both shells.
+  const dismissed = await page.evaluate(() => {
+    const labels = ["继续", "Continue", "知道了", "我知道了", "确定", "开始使用", "Got it", "OK"];
+    for (const overlay of document.querySelectorAll('[role="presentation"]')) {
+      for (const button of overlay.querySelectorAll("button")) {
+        const text = (button.innerText ?? "").trim();
+        if (labels.includes(text)) {
+          button.click();
+          return text;
+        }
+      }
+    }
+    return null;
+  });
+  if (dismissed !== null) {
+    console.log(`NOTE: dismissed a first-run overlay (button "${dismissed}").`);
+    await page.waitForTimeout(600);
+  }
+
+  // The panel is bound to the session's cwd. The CLI/`dsh web` shell offers a
+  // picker that can move the session to a repository; the 0.2 desktop shell has
+  // no such picker (its sidebar lists workspaces but does not rebind the open
+  // session), so there the fixture `status` above is what makes the pill render.
   if ((await page.locator('[data-dsh-git="dock"]').count()) === 0) {
     const picker = page.locator('button[aria-label="选择工作区"]').first();
+    if ((await picker.count()) === 0) {
+      console.log("NOTE: this shell has no workspace picker; relying on the session's own cwd (fixture mode reports a repository).");
+    }
     if ((await picker.count()) > 0) {
       await picker.click();
       await page.waitForTimeout(600);
@@ -157,8 +243,13 @@ try {
     }
   }
   const dock = page.locator('[data-dsh-git="dock"]');
-  check("the dock pill appeared (workspace is a git repository)", (await dock.count()) > 0);
-  if ((await dock.count()) === 0) throw new Error("no dock pill: bind the session to a git workspace first");
+  check("the dock pill appeared (the session is bound to a workspace)", (await dock.count()) > 0);
+  if ((await dock.count()) === 0) {
+    throw new Error(
+      "no dock pill: the session has no cwd to bind (fixture mode already reports a repository), or the client half did not mount — " +
+        "check the boot page / DevTools console for `web boot: … did not activate` or a slot error"
+    );
+  }
 
   const width = () => page.evaluate(() => ({
     panel: document.querySelector('[data-dsh-git="panel"]') ? Math.round(document.querySelector('[data-dsh-git="panel"]').getBoundingClientRect().width) : 0,
@@ -186,7 +277,16 @@ try {
   check("the panel opens as one column", collapsed.panel > 0 && collapsed.diff === 0, JSON.stringify(collapsed));
 
   const changeRow = page.locator('[data-dsh-git="change-row"]').first();
-  check("the change list offers clickable rows", (await page.locator('[data-dsh-git="change-row"]').count()) > 0);
+  const changeRowCount = await page.locator('[data-dsh-git="change-row"]').count();
+  if (changeRowCount === 0 && live) {
+    // Live mode reads the real endpoints, so it needs a workspace that really is
+    // a dirty repository. Saying so beats the 30s locator timeout that a clean
+    // tree used to produce.
+    console.error("NO CHANGES TO SHOW: live mode reads the real endpoints and this session's workspace has a clean tree.");
+    console.error("Open the session on a repository with uncommitted changes, or drop DSH_GIT_UI_LIVE=1 to run on fixtures.");
+    process.exit(2);
+  }
+  check("the change list offers clickable rows", changeRowCount > 0);
   // The row renders its status label and the file's display path on separate
   // lines; the header below must name THAT file. Reading it off the row keeps
   // the check honest whatever the working tree happens to contain (the diff

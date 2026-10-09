@@ -89,9 +89,9 @@
 // patching exception is documented at `patchSyncExternalStore` below.
 import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { hostRoots, unresolvedHost } from "./host-root.mjs";
 
 // ── package resolution ──────────────────────────────────────────────────────
 // Profile-first, like test/host-mount.mjs and test/render.mjs:
@@ -106,17 +106,12 @@ import { pathToFileURL } from "node:url";
 // does not silently fall back to the profiles. That is what makes the SKIP path
 // reachable on a machine that DOES have a profile (point it at an empty temp dir
 // to prove this file skips instead of failing).
-const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-const overridden = typeof process.env.DSH_GIT_DSH_ROOT === "string" && process.env.DSH_GIT_DSH_ROOT !== "";
-const roots = [
-  ...(overridden
-    ? [process.env.DSH_GIT_DSH_ROOT]
-    : [
-      join(dshHome, "profiles", "web", "node_modules"),
-      join(dshHome, "profiles", "node_modules")
-    ]),
-  join(import.meta.dirname, "..", "node_modules")
-].filter((root) => typeof root === "string" && root !== "");
+// test/host-root.mjs owns the discovery (running profile → web → desktop →
+// `$DSH_HOME/profiles/node_modules` → the host packages extracted out of the
+// desktop app's `app.asar`) and the DSH_GIT_DSH_ROOT override semantics: when
+// set it is authoritative and does not fall back. The repo's own node_modules
+// stays last so a locally installed react/react-dom can always be found.
+const roots = [...hostRoots(), join(import.meta.dirname, "..", "node_modules")].filter((root) => root !== "");
 
 /** Package directory holding a resolved entry file (walks up to its package.json). */
 function packageRootOf(entryFile) {
@@ -208,6 +203,16 @@ try {
   reactDomServer = locate("react-dom/server");
   dshVersion.renderer = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-renderer/package.json").file, "utf8")).version;
 } catch (error) {
+  // A machine WITH a host install must fail loudly when a piece cannot be
+  // resolved — this file is the browser half's version guard, and a guard that
+  // skipped here is exactly how the 0.2.0 desktop layout (host packages inside
+  // `app.asar`) went unnoticed. Only "no host install at all" is a skip.
+  const verdict = unresolvedHost();
+  if (verdict.skip === undefined) {
+    console.error(`FAIL: ${error.message}`);
+    console.error(verdict.error);
+    process.exit(1);
+  }
   skip(error.message);
 }
 

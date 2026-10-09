@@ -20,8 +20,9 @@
 | `lib/client.js` | 浏览器半：**手写产物，无构建步骤**，一个 `__ModuleLoader__.load` factory 里装着全部 UI + store + diff 渲染 | 禁止引进构建链；改它刷新页面即生效 |
 | `cordis.patch.yml` | 组合层 patch：一条 `insert` 行（`id: dsh-git` / `name: '@xia-sc/dsh-git'`） | **故意不写 `inject`**——模块导出的 `inject` 才是 Cordis 读的声明 |
 | `test/smoke.mjs` | 路由/信封/端点分发/入参校验 + 客户端 bundle 结构；**不 spawn git** | 默认门禁，`npm test` 第一个 |
-| `test/host-mount.mjs` | 在真 Cordis + 真 `dsh-client-connection` 上挂载插件行，并用**宿主自己的 zod schema** 校验手写信封（真路由处理器 + 假 req/res；从 `DSH_HOME` 的 profile 解析；找不到就 SKIP） | 宿主换版后先跑这个 |
-| `test/slot-mount.mjs` | 用**真** `SlotCore`/`SlotRegistry` + 真渲染器把两个座位挂起来（真 Cordis、真 `useSessions`/`sessionId`/`locale` 座位、无 `data-slot-error`） | 浏览器半的换版守护；SSR 跑不到 effect（见文件头），找不到宿主包就 SKIP |
+| `test/host-root.mjs` | 两个宿主守护**共用**的宿主发现：运行 profile → `web`/`desktop` → `$DSH_HOME/profiles/node_modules` → **从 desktop 的 `app.asar` 提取宿主包**（跨盘符探测，缓存到 `%TEMP%\dsh-git-host-asar\<size+mtime>`）；`DSH_GIT_DSH_ROOT` 是覆盖、`DSH_ASAR` 指定归档 | **"有宿主却解析不到"= FAIL**，只有"完全没装"才 SKIP；改宿主发现只改这一处 |
+| `test/host-mount.mjs` | 在真 Cordis + 真 `dsh-client-connection` 上挂载插件行，并用**宿主自己的 zod schema** 校验手写信封（真路由处理器 + 假 req/res） | 宿主换版后先跑这个；宿主根走 `test/host-root.mjs` |
+| `test/slot-mount.mjs` | 用**真** `SlotCore`/`SlotRegistry` + 真渲染器把两个座位挂起来（真 Cordis、真 `useSessions`/`sessionId`/`locale` 座位、无 `data-slot-error`） | 浏览器半的换版守护；SSR 跑不到 effect（见文件头）；宿主根同上 |
 | `test/generate.mjs` | AI 起草提交信息的纯单元：路由解析、prompt、截断、流式拼装、失败码 | 不 spawn git |
 | `test/render.mjs` | 双界面真实 React SSR：两个座位、提交区控件、diff 解析器与行渲染、`act()` 回传 | 需要 `react`/`react-dom`，见 §5 |
 | `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、重命名配对、删除、二进制、截断、校验） | 需要 spawn git，不在 `npm test` 内 |
@@ -39,10 +40,15 @@ npm run test:diff         # 端到端 diff（必须能 spawn git，见 §8）
 npm run test:commit       # 端到端 commit
 $env:DSH_GIT_REACT_ROOT = "<含 react 与 react-dom 的 node_modules>"   # render 测试前置
 node test/render.mjs
-node test/ui/verify-diff.mjs            # 默认 fixture 拦截，验证客户端半边
-$env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（需先重启 dsh web）
+node test/ui/verify-diff.mjs            # 默认整条 /dsh-git-rpc 夹具化，验证客户端半边（自关首启弹层）
+$env:DSH_GIT_UI_LIVE = "1"; node test/ui/verify-diff.mjs   # 打真端点（会话所在仓库必须有未提交改动）
 node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 localStorage 点设置弹层（不需认证）
 ```
+
+`host-mount` / `slot-mount` 的宿主根由 `test/host-root.mjs` 解析。本机是 **desktop 版**时，它先把
+`app.asar` 里的宿主包提取到 `%TEMP%\dsh-git-host-asar\<hash>`（首次约 6 秒 / 7800 个文件，之后走缓存，
+宿主换版后 key 变化自动重提取）；`$env:DSH_GIT_DSH_ROOT` 覆盖根，`$env:DSH_ASAR` 指定归档。
+`npm test` 在真 desktop 宿主上因此不再 SKIP —— 前提是那台机器装着 dsh（CI 上仍然 SKIP + 退 0）。
 
 没有 lint、没有 typecheck、没有 PR 检查（`.github/` 里只有一条发布 workflow，见 §7）；
 没有 eslint/prettier/tsconfig。**门禁仍然是测试**，别指望自动化兜底。
@@ -199,15 +205,22 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 
 - **不 spawn git 的五个**是默认门禁：加端点/校验就加到 `test/smoke.mjs`；加纯逻辑就进 `test/generate.mjs`
   或 render 的解析器断言；加 UI 就进 `test/render.mjs`（SSR，能覆盖结构、文案、解析与行渲染）；
-  改宿主/座位契约就指望 `test/host-mount.mjs`（信封 schema）与 `test/slot-mount.mjs`（真座位注册）——两者
-  没有 profile 时都打印 SKIP 并退 0。
+  改宿主/座位契约就指望 `test/host-mount.mjs`（信封 schema）与 `test/slot-mount.mjs`（真座位注册）。
+- **两个宿主守护的 SKIP 契约（已经栽过两次，别改回去）**：宿主根统一由 `test/host-root.mjs` 解析。
+  **只有"这台机器完全没装 dsh"**（例如 CI 的 `ubuntu-latest`）才打印 SKIP 并退 0；**"装了却解析不到"
+  必须 FAIL + 退 1**。此前两者在解析失败时都退化成 SKIP，于是 0.2.0 桌面版把宿主包搬进 `app.asar` 之后，
+  两个守护**空转了一整轮**（`COMPAT.md` §5.4 记的是同类事故的第二次：第一次是 `slots` 版本探测被捆进 `try`）。
+  反证配方（都已实测）：`DSH_HOME=<空目录> DSH_ASAR=<不存在的路径>` → SKIP+0；`DSH_GIT_DSH_ROOT=<空目录>`
+  → SKIP+0；`DSH_ASAR=<一个非 asar 文件>` → FAIL+1。
 - **必须 spawn git 的**（`test/diff.mjs` / `test/commit.mjs`）单独成文件并加 `npm run test:xxx`，
   不要塞进 `npm test`——沙箱里子进程管道 stdio 会 EPERM（见 §8）。
 - `test/render.mjs` 需要一份真实 `react`/`react-dom`，解析顺序：`DSH_GIT_REACT_ROOT` → `$DSH_HOME/profiles/web/node_modules`
   → `$DSH_HOME/profiles/node_modules` → 一个 npx 缓存路径 → 常规 node 解析；全都没有时**打印 SKIP 并退 0**（不要改成失败）。
 - UI 脚本用 `playwright-core` + 本机 Chrome（`node_modules` 是 gitignore 的，`npm install --no-save playwright-core`
-  即可），靠 `data-dsh-git` 钩子定位。`test/ui/verify-diff.mjs` 默认拦截 `/dsh-git-rpc/diff` 用 fixture 验证客户端，
-  `DSH_GIT_UI_LIVE=1` 才打真端点；`DSH_GIT_UI_WORKSPACE` 选工作区，`DSH_GIT_UI_URL`/`DSH_GIT_UI_STORAGE_STATE` 过认证。
+  即可），靠 `data-dsh-git` 钩子定位。`test/ui/verify-diff.mjs` 默认**把整条 `/dsh-git-rpc/*` 夹具化**
+  （`status`/`log`/`branches`/`diff`，所以不要求工作区是脏仓库），并自己关掉 desktop 版的首启弹层；
+  `DSH_GIT_UI_LIVE=1` 才打真端点（此时要求会话所在仓库确有未提交改动，否则 `NO CHANGES TO SHOW` + 退 2）；
+  `DSH_GIT_UI_WORKSPACE` 选工作区（只有 CLI/web shell 有那个选择器），`DSH_GIT_UI_URL`/`DSH_GIT_UI_STORAGE_STATE` 过认证。
   `test/ui/verify-settings.mjs`（`npm run test:ui:settings`）既不需要 dsh web 也不需要认证：它自己起回环 http 服务，
   用 React UMD 把客户端半边挂进真 Chrome，于是纯客户端交互（弹层开关、select、`localStorage`、请求载荷）可以真点。
 - 测 git 行为要**真起 git**：临时仓库、`core.autocrlf=false`、`mkdtemp` + `finally rm`。重命名这类事只有真 git
@@ -231,7 +244,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.7.0）。
+1. 改 `package.json` 的版本号（当前 0.7.1）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
@@ -293,8 +306,11 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   于是两个端到端测试跑不了。**用 pwsh 直接调 git 是可以的**（管道由 PowerShell 建立），所以临时验证可以
   `git -C <repo> diff --numstat` 之类先手工对一遍数；真要跑端到端测试就请用户放开沙箱或在普通终端跑。
 - git 的 `core.autocrlf` 会刷 `LF will be replaced by CRLF` 警告，属正常；提交进仓库的仍是 LF。
-- 本机开发装法：`C:\Users\<user>\.dsh\profiles\web\package.json` 里以 `link:E:/dsh/plugin/dsh-git` 引用本目录，
-  所以改了文件就是改了"已安装的插件"，不需要重新 `dsh plugin add`。
+- **本机（2026-10）实际跑的是 desktop 版**：`DSH_PROFILE=desktop`，插件在
+  `C:\Users\<user>\.dsh\profiles\desktop\package.json` 里是 **npm 安装副本**（`@xia-sc/dsh-git: ^0.7.0`），
+  **不是 `link:`** —— 所以**改仓库不会自动生效**（本文档写作时两者内容恰好逐字节相同，见 `COMPAT.md` §6.1）。
+  `profiles/web` 里那条 `link:E:/dsh/plugin/dsh-git` 仍在，但那是另一套安装。
+  要让 desktop 版跑上新代码：`dsh plugin --profile desktop add E:/dsh/plugin/dsh-git`，然后**重启应用**。
 - **改包名要连 profile 一起改**：`cordis.patch.yml` 里的行名就是包名，Loader 从 profile 解析这个
   specifier。从 `@dsh-plugins/dsh-git` 改成 `@xia-sc/dsh-git` 之后，profile 里那条 `link:` 的键和
   `dsh.profile.bundles` 里的名字都得换成新名，否则下次 `dsh web` 启动解析不到模块，插件（含胶囊/面板）会消失。
@@ -303,9 +319,13 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   `profiles/web/node_modules/@xia-sc/dsh-git` 指向本目录的链接。改完**必须重启 `dsh web`**——
   运行中的进程用的是启动时组合的旧行名，重启前浏览器会加载到"自注册 id 与 boot 表条目 id 不一致"的 bundle，
   客户端半边静默不挂载（宿主半还在，端点照常 200，容易误判）。
-- 真实 GUI 在 `http://127.0.0.1:3080`。新起的无头浏览器**默认过不了认证**（`dsh web` 会用一次性 token 换
-  cookie，cookie 名里带 token）：要么用已登录的浏览器（如 MCP 的 playwright 实例），要么把 `dsh web`
-  打印的那个带 token 的 URL 传进来。
+- 真实 GUI 在 **`http://127.0.0.1:19387`**（`DSH_WEB_URL`；旧文档里的 3080 属于 web/CLI 版，本机已无监听）。
+  新起的无头浏览器**默认过不了认证**，而且**桌面版不再打印带 token 的 URL**（launch token 由 Electron
+  主进程经 IPC 直接交给内嵌窗口，`dsh-desktop-host/lib/index.js:337-344`）：要么用已登录的浏览器
+  （如 MCP 的 playwright 实例），要么**自签一个会话 cookie** —— 做法见 `AUDIT-0.2.0-rc.2.md` §一
+  （签名密钥取自 credentials store 的 `client-connection/browser-session` 记录，cookie 形状见
+  `dsh-client-connection` 的 `authorizeIndex`）。`test/ui/*.mjs` 可直接吃
+  `DSH_GIT_UI_STORAGE_STATE=<storage-state.json>`。
 - 会话里的验证可以借 MCP 的 playwright / chrome-devtools：`browser_run_code_unsafe` 能拿到 `page`；
   注意那个 VM 里**没有 Node 全局对象**（`require`/`process`/`fs` 都没有），fixture 要内联在脚本里。
 
@@ -325,7 +345,9 @@ the `/dsh-git-rpc` route and must keep the `connection.requestRejection` fence; 
 `@deepseek-ai/*` runtime packages and never writes the index, the working tree, or git config outside the
 explicit `stage`/`commit`/`checkout` endpoints. Client edits apply on page refresh, host edits need a
 `dsh web` restart. Tests are the only gate: `npm test` runs the five git-free suites (smoke, host-mount,
-slot-mount, generate, render); `npm run test:diff`
+slot-mount, generate, render); host discovery (including extraction of the desktop app's `app.asar`) lives
+in `test/host-root.mjs` — no host install skips, an installed-but-unresolvable host fails loudly;
+`npm run test:diff`
 and `npm run test:commit` are real-git end-to-end tests that need to spawn git (blocked in a confined
 sandbox) and are therefore kept out of `npm test`. The one CI workflow (`.github/workflows/publish.yml`)
 does nothing but publish: a `vX.Y.Z` tag runs the gate and `npm publish --provenance` (OIDC trusted

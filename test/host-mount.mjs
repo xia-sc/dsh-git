@@ -8,24 +8,20 @@
 // whose inject is only `["credentials"]`, so the row failed to mount with
 // `cannot get property "webServer" without inject`.
 //
-// The DSH packages are resolved from the installed profile (DSH_HOME), so the
-// test covers whatever version is actually deployed. Without a profile it
-// reports SKIP.
+// The DSH packages are resolved through test/host-root.mjs, so the test covers
+// whatever version is actually deployed — including the Electron **desktop**
+// install, whose host packages live inside `app.asar` and are extracted to a
+// temp cache on first use. Without any host install it reports SKIP; with one
+// that resolves nothing it FAILS (never a silent skip: see host-root.mjs).
 import { existsSync, readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { apply, inject, name } from "../lib/index.js";
+import { hostRoots, unresolvedHost } from "./host-root.mjs";
 
 function findDshRoot() {
-  const dshHome = process.env.DSH_HOME ?? join(homedir(), ".dsh");
-  const roots = [
-    process.env.DSH_GIT_DSH_ROOT,
-    join(dshHome, "profiles", "web", "node_modules"),
-    join(dshHome, "profiles", "node_modules")
-  ].filter((root) => typeof root === "string" && root !== "");
-  for (const root of roots) {
+  for (const root of hostRoots()) {
     const cordis = join(root, "@deepseek-ai", "cordis", "lib", "index.js");
     const connection = join(root, "@deepseek-ai", "dsh-client-connection", "lib", "index.js");
     if (existsSync(cordis) && existsSync(connection)) return { root, cordis, connection };
@@ -35,8 +31,14 @@ function findDshRoot() {
 
 const located = findDshRoot();
 if (located === undefined) {
-  console.log("SKIP: no installed DSH profile found (set DSH_GIT_DSH_ROOT to a node_modules containing @deepseek-ai/*).");
-  process.exit(0);
+  const verdict = unresolvedHost();
+  if (verdict.skip !== undefined) {
+    console.log(`SKIP: ${verdict.skip}`);
+    console.log("  set DSH_GIT_DSH_ROOT to a node_modules containing @deepseek-ai/* to point this guard at another install.");
+    process.exit(0);
+  }
+  console.error(`FAIL: ${verdict.error}`);
+  process.exit(1);
 }
 
 const { Context } = await import(pathToFileURL(located.cordis).href);

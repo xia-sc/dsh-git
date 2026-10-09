@@ -18,11 +18,11 @@
 | 角色 | 路径 | 版本 |
 | --- | --- | --- |
 | 正在运行的 `dsh web` | PID 52196，`D:\software\nodejs\node_modules\@deepseek-ai\dsh\lib\bin.js web`，`127.0.0.1:3080` | 0.1.7-alpha.1 |
-| 宿主包真实来源 | `C:\Users\sc\.dsh\profiles\node_modules\@deepseek-ai\*`（junction）→ `D:\software\nvm\nvm\v26.9.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\*` | 全部 0.1.7-alpha.1 |
+| 宿主包真实来源 | `%DSH_HOME%\profiles\node_modules\@deepseek-ai\*`（junction）→ `D:\software\nvm\nvm\v26.9.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\*` | 全部 0.1.7-alpha.1 |
 | 本插件的部署方式 | `...\profiles\web\node_modules\@xia-sc\dsh-git` → `E:\dsh\plugin\dsh-git`（link） | 0.6.0 |
 | 版本对比基线 | `E:\dsh\deepseek-harness\deepseek-harness`（tag `dsh-v0.1.6-alpha.2`，`ddefc45fbc`） | 0.1.6-alpha.2 |
 
-> 注意：`C:\Users\sc\.dsh\profiles\web\node_modules\@deepseek-ai` 是**空目录**。
+> 注意：`%DSH_HOME%\profiles\web\node_modules\@deepseek-ai` 是**空目录**。
 > `test/host-mount.mjs` 能通过，是因为 `findDshRoot()` 的第二个候选根（`profiles/node_modules`）命中了真正的安装树
 > （`test/host-mount.mjs:20-33`）。建议在该测试里加一行注释，免得下次换版时误判"profile 里没有宿主包"。
 
