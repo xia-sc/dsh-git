@@ -16,10 +16,11 @@ import { readFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { findChrome } from "./chrome.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SHOT = join(ROOT, "test", "ui", "settings-popover.png");
-const CHROME = process.env.DSH_GIT_UI_CHROME ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const CHROME = findChrome();
 const TYPES = { ".js": "text/javascript", ".html": "text/html", ".json": "application/json" };
 
 // The harness page: React UMD (18, the version the plugin resolves) + the module

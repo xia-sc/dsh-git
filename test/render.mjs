@@ -99,7 +99,10 @@ const ctx = {
           return { ok: true, value: { repo: true, branch: "main", detached: false, oid: "abc1234", upstream: "origin/main", ahead: 1, behind: 0, dirty: 2, changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }] } };
         }
         if (endpoint === "branches") {
-          return { ok: true, value: { repo: true, current: "main", local: [{ name: "main", current: true, sha: "abc1234", upstream: "origin/main" }, { name: "dev", current: false, sha: "def5678", upstream: null }], remote: [{ name: "origin/main", short: "main" }] } };
+          // Two remotes carrying a branch of the same name: the shape that made
+          // the switcher's remote options indistinguishable before they were
+          // labelled with the full remote-tracking ref.
+          return { ok: true, value: { repo: true, current: "main", local: [{ name: "main", current: true, sha: "abc1234", upstream: "origin/main" }, { name: "dev", current: false, sha: "def5678", upstream: null }], remote: [{ remote: "origin", branch: "main", name: "origin/main", short: "main" }, { remote: "upstream", branch: "main", name: "upstream/main", short: "main" }] } };
         }
         if (endpoint === "log") {
           return { ok: true, value: { repo: true, commits: [{ sha: "abc1234", author: "me", subject: "init", refs: "HEAD -> main" }] } };
@@ -245,7 +248,81 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   console.log("panel expanded render bytes:", html.length);
 }
 
-// Dock: loaded repo state → the branch summary pill.
+// The branch switcher's remote options carry the FULL remote-tracking ref.
+// Two remotes often carry a branch of the same name; labelling both with the
+// bare branch part (`main`, `main`) is exactly the ambiguity this asserts
+// against. The start-point list ("new branch from…") has always sent full refs
+// and must keep doing so.
+{
+  const { branchOptions, baseOptions } = mod.__internals;
+  if (typeof branchOptions !== "function" || typeof baseOptions !== "function") {
+    throw new Error("client must expose branchOptions/baseOptions for the render test");
+  }
+  const state = store.getSnapshot();
+  const t = commonProps.t;
+  const switcher = renderToStaticMarkup(React.createElement("select", null, branchOptions(state, t)));
+  for (const ref of ["origin/main", "upstream/main"]) {
+    if (!switcher.includes(`value="${ref}"`)) throw new Error(`switcher must offer the full ref ${ref}: ${switcher}`);
+    if (!switcher.includes(`>${ref}<`)) throw new Error(`switcher must LABEL the full ref ${ref}: ${switcher}`);
+  }
+  // The two entries are still distinct options, not one ref listed twice.
+  if (switcher.split(`value="upstream/main"`).length !== 2) throw new Error(`the duplicate-name remotes must stay distinguishable: ${switcher}`);
+  const bases = renderToStaticMarkup(React.createElement("select", null, baseOptions(state, t)));
+  for (const ref of ["origin/main", "upstream/main"]) {
+    if (!bases.includes(`value="${ref}"`) || !bases.includes(`>${ref}<`)) throw new Error(`start-point list must offer ${ref} as value and label: ${bases}`);
+  }
+  // The local branch stays a plain name (it is what the switcher pre-selects).
+  if (!switcher.includes('value="main"') || !switcher.includes(">main ✓<")) throw new Error(`local branches must keep plain names: ${switcher}`);
+  // Nothing renders an entry for the per-remote HEAD symref: it is not pickable.
+  if (switcher.includes("origin/HEAD")) throw new Error(`the remote HEAD symref must not be offered: ${switcher}`);
+  console.log("branch option lists:", JSON.stringify(switcher.slice(0, 220)));
+}
+
+// A refused switch to a second remote's copy of a branch must be worded as the
+// collision it is, in the panel's own language rather than git's ("a branch
+// named 'main' already exists" says nothing about what to do).
+{
+  const { outputView, checkoutResult } = mod.__internals;
+  if (typeof checkoutResult !== "function") throw new Error("client must expose checkoutResult for the render test");
+  const conflict = {
+    ok: false,
+    error: {
+      code: "internal",
+      message: "本地分支 main 跟踪的是 origin/main，无法再把它关联到 upstream/main 上（git 不允许两个分支同名）。HEAD 未改动；请用「新建分支」以 upstream/main 为起点另建一个名字不同的分支。",
+      details: { code: "checkout-remote-conflict", branch: "upstream/main", local: "main", upstream: "refs/remotes/origin/main" }
+    }
+  };
+  // A translator that interpolates like the real one, so the assertion proves
+  // the placeholders are filled rather than that the key survived.
+  const text = (key, params) => {
+    const sink = {
+      "checkout.conflict": "本地分支 {local} 跟踪的是 {tracks}，无法再切换到 {branch}（git 不允许两个同名分支）。HEAD 未改动，请点「新建分支」以 {branch} 为起点另建一个分支",
+      "checkout.conflictNoTrack": "本地已有同名分支 {local}，无法切换到 {branch}（git 不允许两个同名分支）。HEAD 未改动，请点「新建分支」以 {branch} 为起点另建一个分支"
+    }[key] || key;
+    return Object.keys(params || {}).reduce((out, name) => out.split(`{${name}}`).join(String(params[name])), sink);
+  };
+  const result = checkoutResult(conflict, { branch: "upstream/main" }, text);
+  if (result.kind !== "error") throw new Error(`a refused switch must surface as a failure: ${JSON.stringify(result)}`);
+  const card = renderToStaticMarkup(outputView(result, text, true, () => {}));
+  for (const needle of ["upstream/main", "origin/main", "新建分支", "HEAD 未改动"]) {
+    if (!card.includes(needle)) throw new Error(`the conflict card must mention ${JSON.stringify(needle)}: ${card}`);
+  }
+  // The full host diagnostic stays reachable behind the toggle.
+  if (!card.includes('data-dsh-git="output-toggle"') || !card.includes('data-dsh-git="output-detail"')) {
+    throw new Error(`the conflict card must keep git's own words one click away: ${card}`);
+  }
+  // A plain failure keeps the default wording (git's own words as the summary),
+  // and an ordinary switch still confirms the branch it landed on.
+  const plain = checkoutResult({ ok: false, error: { message: "fatal: not a git repository", details: { code: "not-a-repo" } } }, { branch: "dev" }, text);
+  if (plain.text !== "fatal: not a git repository") throw new Error(`an unrecognized failure must keep the host message: ${JSON.stringify(plain)}`);
+  const tracked = checkoutResult({ ok: true, value: { branch: "main", message: "branch 'main' set up to track 'upstream/main'." } }, { branch: "upstream/main" }, text);
+  if (tracked.params.branch !== "main") throw new Error(`a tracking switch must report the local branch it created: ${JSON.stringify(tracked)}`);
+  const same = checkoutResult({ ok: true, value: { branch: "dev", message: null } }, { branch: "dev" }, text);
+  if (same.params.branch !== "dev" || same.text !== null) throw new Error(`a plain switch must keep its own summary key: ${JSON.stringify(same)}`);
+  console.log("conflict card:", JSON.stringify(card.slice(0, 200)));
+}
+
+
 {
   const html = renderToStaticMarkup(React.createElement(bySlot["conversation.input.dock"].comp, commonProps));
   if (!html.includes("main") || !html.includes("●2")) {

@@ -1,6 +1,6 @@
 {
   "name": "@xia-sc/dsh-git",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Complete Git management for the DeepSeek Harness Web GUI: branch switch, new-branch-from-base, fetch, pull, stage-all, commit (with AI-drafted message), push, status, and a click-to-open diff viewer (staged/unstaged, resizable) — as a collapsible floating panel that follows the current session's workspace.",
   "type": "module",
   "main": "lib/index.js",
@@ -40,8 +40,10 @@
   },
   "scripts": {
     "test": "node test/smoke.mjs && node test/host-mount.mjs && node test/slot-mount.mjs && node test/generate.mjs && node test/render.mjs",
+    "test:checkout": "node test/checkout.mjs",
     "test:commit": "node test/commit.mjs",
     "test:diff": "node test/diff.mjs",
+    "test:ui:branches": "node test/ui/verify-branches.mjs",
     "test:ui:settings": "node test/ui/verify-settings.mjs",
     "prepublishOnly": "npm test"
   },

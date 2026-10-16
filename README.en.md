@@ -19,7 +19,16 @@ new-branch-from-base.
   top-down: status line (pending count, ahead/behind, upstream) → the branch
   switcher with its **dirty-tree pre-check** (selecting a branch while
   uncommitted changes exist warns with the affected files instead of switching,
-  plus a "switch anyway" escape hatch) → a **network toolbar** (Fetch / Pull /
+  plus a "switch anyway" escape hatch). Remote branches are listed under their
+  **full remote-tracking ref** (`origin/main`, `upstream/main`) rather than the
+  bare branch name: two remotes often carry a branch of the same name, and short
+  names would show up as `main` twice with no way to tell them apart. Picking a
+  remote branch starts a same-named local branch tracking it; when a local
+  branch of that name already exists (whether it tracks another remote or tracks
+  nothing) git forbids two branches with one name, so the plugin **does not
+  quietly detach HEAD and does not rewrite the existing branch's upstream** — it
+  reports the collision and points at "＋ New branch" to start a differently
+  named branch from that remote ref → a **network toolbar** (Fetch / Pull /
   Push, three equal columns, Push being the primary button) → a **commit card**
   (Stage all + draft basis + "✨ AI draft" in equal columns, the message input
   below it and the commit button) → two list cards. Every button group is split
@@ -244,8 +253,8 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 | Endpoint | args | Result (`value`) |
 | --- | --- | --- |
 | `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path, index, worktree, file, origFile}] }`. `path` is the display string (a rename reads `old → new`), `file`/`origFile` are the pathspec `diff` needs, and `index`/`worktree` are the two porcelain-v2 letters. |
-| `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
-| `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }` via `git switch --guess`; the browser pre-checks dirty state and warns before switching; a refusal caused by "local changes would be overwritten" is surfaced with a readable prefix. |
+| `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{remote, branch, name, short}] }`. A remote entry carries both the **full remote-tracking ref** (`name`, e.g. `origin/main`) and the branch part (`branch`/`short`, e.g. `main`): two remotes often carry a branch of the same name, and a bare short name is indistinguishable in the UI (`origin/main` and `upstream/main` both rendered as `main`). Each remote's `HEAD` symref (`refs/remotes/<remote>/HEAD`) is filtered out — it is not a branch that can be switched to. |
+| `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`. A local branch name goes through `git switch --guess`; a remote-tracking ref (`origin/main`) starts a new same-named local tracking branch (`git switch --track`). When a local branch of that name already exists — whether it tracks a **different** remote or tracks nothing — the call fails with `checkout-remote-conflict` and **leaves HEAD untouched** (no `--detach`, no rewriting the existing branch's upstream), because git forbids two branches with one name; use `createBranch` with that ref as the base to start a differently named branch instead. If a **local** branch happens to be named `origin/main` itself, it wins (matching git's own DWIM; otherwise the panel could never reach it). The browser pre-checks dirty state and warns before switching; a refusal caused by "local changes would be overwritten" is surfaced with a readable prefix. |
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }` via `git switch --create <branch> <base>` (omitted base = HEAD); creates the branch from the base branch and switches to it. |
 | `fetch` | `{ cwd, remote? }` | `{ message }` (120s timeout) |
 | `pull` | `{ cwd }` | `{ message }` via `git pull --ff-only` (never implicit-merge) |
@@ -338,6 +347,11 @@ shell metacharacters, and leading dashes are all recorded verbatim.
     React UMD build, and then really clicks the ⚙ settings popover, switches the
     language, and checks both the `localStorage` persistence and the `language`
     the draft request carries; it writes `test/ui/settings-popover.png`.
+  - `npm run test:ui:branches` — equally offline and unauthenticated: the fixture
+    gives two remotes a branch of the same name, and the script reads the branch
+    switcher's real `<option>` list to assert the remote entries carry the full
+    remote-tracking ref (`origin/main` and `upstream/main` stay distinguishable
+    and no two options share a label); it writes `test/ui/select-open.png`.
 - `npm run test:commit` — **end-to-end**: really spawns git in a throwaway
   repository, commits through the plugin's own `/dsh-git-rpc/commit` route, and
   reads the message back with `git log --format=%B` (multi-line, CRLF, non-ASCII,

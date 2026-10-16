@@ -2,11 +2,14 @@
 // values and read computed style; also test whether the dropdown listbox
 // (opened) reflects option colors.
 import { chromium } from "playwright-core";
+import { fileURLToPath } from "node:url";
 const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 const browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ["--no-sandbox"] });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
-await page.goto("http://127.0.0.1:3080/", { waitUntil: "domcontentloaded", timeout: 30000 });
+// The live GUI. `DSH_GIT_UI_URL` overrides it, so the script is not pinned to
+// whichever port the local `dsh web` happens to print.
+await page.goto(process.env.DSH_GIT_UI_URL || process.env.DSH_WEB_URL || "http://127.0.0.1:3080/", { waitUntil: "domcontentloaded", timeout: 30000 });
 await page.waitForTimeout(4000);
 const studyRow = page.locator('div[class*=projectRow]', { hasText: "study-后台" }).first();
 if (await studyRow.count() > 0) { await studyRow.click(); await page.waitForTimeout(1000); }
@@ -37,7 +40,7 @@ console.log("concrete option styles:", JSON.stringify(probe));
 await page.locator('[data-dsh-git="panel"] select').focus();
 await page.keyboard.press("Alt+ArrowDown");
 await page.waitForTimeout(800);
-await page.screenshot({ path: "E:/dsh/plugin/dsh-git/test/ui/select-open.png" });
+await page.screenshot({ path: fileURLToPath(new URL("./select-open.png", import.meta.url)) });
 await page.keyboard.press("Escape");
 
 await browser.close();

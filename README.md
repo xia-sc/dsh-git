@@ -15,7 +15,13 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 - **悬浮面板**（`shell.overlay`）：折叠时不渲染任何元素（不会遮挡输入框）；
   展开后自上而下是一条工作流：状态行（未提交计数、领先/落后、上游）→
   带 **脏树预检** 的分支切换器（有未提交修改时选择分支，会先显示受影响文件列表
-  警告而不是直接切换，并提供"仍要切换"按钮）→ **网络工具条**（拉取更新 / 拉取合并 /
+  警告而不是直接切换，并提供"仍要切换"按钮）。远端分支在列表里显示**完整远程引用**
+  （`origin/main`、`upstream/main`）而不是光秃秃的分支名——多个 remote 常有同名分支，
+  只显示短名的话两个选项都叫 `main`，根本分不出是哪一个。选一个远端分支会新建同名
+  本地分支并跟踪它；若这个名字的本地分支已经存在（无论它跟踪的是另一个 remote 还是
+  什么都没跟踪），git 不允许两个同名分支，插件**不会偷偷切到游离 HEAD、也不会改掉
+  已有分支的 upstream**，而是明确报错并让你用"＋ 新建分支"以该远端引用为起点另建一个
+  名字不同的分支 → **网络工具条**（拉取更新 / 拉取合并 /
   推送，三等宽，"推送"是主按钮）→ **提交卡片**（"暂存全部" + AI 生成依据 +
   "✨ AI 生成"三等宽，下面是提交信息输入框（多行文本框，回车换行、Ctrl/Cmd+Enter
   提交）与提交按钮）→ 两张列表卡片。按钮一律**等宽分栏**，不再是一排宽窄不一的按钮。
@@ -183,8 +189,8 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | 端点 | 参数 | 结果（`value`） |
 | --- | --- | --- |
 | `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path, index, worktree, file, origFile}] }`。`path` 是展示串（重命名读作 `old → new`），`file`/`origFile` 是交给 `diff` 的 pathspec，`index`/`worktree` 是 porcelain-v2 的两个字母。 |
-| `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
-| `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`，经 `git switch --guess`；浏览器会预检脏树并提前警告；因"本地修改会被覆盖"被拒绝时会带上可读前缀。 |
+| `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{remote, branch, name, short}] }`。远程项同时给出**完整远程跟踪 ref**（`name`，如 `origin/main`）与分支部分（`branch`/`short`，如 `main`）：多个 remote 常有同名分支，只给短名在界面上分辨不出（`origin/main` 与 `upstream/main` 都显示成 `main`）。每个 remote 的 `HEAD` 符号引用（`refs/remotes/<remote>/HEAD`）会被过滤掉——它不是能切换的分支。 |
+| `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`。`branch` 是本地分支名时走 `git switch --guess`；是远程跟踪 ref（`origin/main`）时新建同名本地跟踪分支并切换过去（`git switch --track`）。若同名本地分支已存在——无论它跟踪的是**另一个** remote 还是什么都没跟踪——则报 `checkout-remote-conflict` 并**保持 HEAD 不动**（不 `--detach`、不改已有分支的 upstream），因为 git 不允许两个同名分支；改用 `createBranch` 以该 ref 为起点另建一个名字不同的分支。若**本地**恰好有一个分支本身就叫 `origin/main`，该本地分支优先（与 git 自己的 DWIM 一致，否则它在面板里就再也点不到了）。浏览器会预检脏树并提前警告；因"本地修改会被覆盖"被拒绝时会带上可读前缀。 |
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }`，经 `git switch --create <branch> <base>`（缺省 base 即 HEAD）；从基分支创建新分支并切换过去。 |
 | `fetch` | `{ cwd, remote? }` | `{ message }`（120s 超时） |
 | `pull` | `{ cwd }` | `{ message }`，经 `git pull --ff-only`（绝不隐式合并） |
@@ -254,6 +260,10 @@ dsh plugin --profile web remove @xia-sc/dsh-git
     React UMD 挂载客户端半边，真点 ⚙ 设置弹层、切换语言、验证 `localStorage`
     持久化与「✨ AI 生成」请求里带的 `language`；截图落在
     `test/ui/settings-popover.png`。
+  - `npm run test:ui:branches` —— 同样离线、同样不需要认证：夹具里两个 remote
+    各有一个同名 `main`，在真浏览器里读分支切换器的 `<option>` 列表，断言远端
+    项给的是完整 ref（`origin/main` / `upstream/main` 可区分、没有哪两项重名）；
+    截图落在 `test/ui/select-open.png`。
   - 也提供 `npm test`（依次跑五个）。
   - `npm run test:commit` —— **端到端**：在临时仓库里真起 git，走插件的
     `/dsh-git-rpc/commit` 路由提交，再用 `git log --format=%B` 逐字节比对提交

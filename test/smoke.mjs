@@ -284,6 +284,19 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   }
 }
 
+// A remote-REF shaped branch argument is valid input, not invalid-branch: the
+// panel sends `origin/main` for remote picks, and the host resolves it (a
+// tracking switch, or a diagnosed collision) before falling back to --guess.
+// This asserts only that validation lets it through to the git layer.
+{
+  for (const ref of ["origin/main", "upstream/feature/x", "origin/release-1.2"]) {
+    const res = await call("checkout", { cwd: NO_REPO_CWD, branch: ref });
+    if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`a remote-tracking ref must reach git: ${JSON.stringify(ref)} -> ${JSON.stringify(res)}`);
+    }
+  }
+}
+
 // invalid new-branch / base names (rejected before any git spawn)
 {
   const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b"];
