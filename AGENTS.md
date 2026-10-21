@@ -22,7 +22,8 @@
 | `test/smoke.mjs` | 路由/信封/端点分发/入参校验 + 客户端 bundle 结构；**不 spawn git** | 默认门禁，`npm test` 第一个 |
 | `test/host-root.mjs` | 两个宿主守护**共用**的宿主发现：运行 profile → `web`/`desktop` → `$DSH_HOME/profiles/node_modules` → **从 desktop 的 `app.asar` 提取宿主包**（跨盘符探测，缓存到 `%TEMP%\dsh-git-host-asar\<size+mtime>`）；`DSH_GIT_DSH_ROOT` 是覆盖、`DSH_ASAR` 指定归档 | **"有宿主却解析不到"= FAIL**，只有"完全没装"才 SKIP；改宿主发现只改这一处 |
 | `test/host-mount.mjs` | 在真 Cordis + 真 `dsh-client-connection` 上挂载插件行，并用**宿主自己的 zod schema** 校验手写信封（真路由处理器 + 假 req/res） | 宿主换版后先跑这个；宿主根走 `test/host-root.mjs` |
-| `test/slot-mount.mjs` | 用**真** `SlotCore`/`SlotRegistry` + 真渲染器把两个座位挂起来（真 Cordis、真 `useSessions`/`sessionId`/`locale` 座位、无 `data-slot-error`） | 浏览器半的换版守护；SSR 跑不到 effect（见文件头）；宿主根同上 |
+| `test/slot-mount.mjs` | 用**真** `SlotCore`/`SlotRegistry` + 真渲染器把两个座位挂起来（真 Cordis、真 `useSessions`/`sessionId`/`locale` 座位、无 `data-slot-error`） | 浏览器半的换版守护；SSR 跑不到 effect（见文件头）；宿主根同上；slots 包由 `test/host-slots.mjs` 取 |
+| `test/host-slots.mjs` | **slot-core 获取**：≤0.2.0 从安装树拿；0.2.1+ 宿主把 `dsh-client-ui-slots` 内联进 shell bundle、安装树没有它，于是按安装 renderer 的同版本从 npm 取真包（SRI 校验、按版本缓存到 `%TEMP%\dsh-git-slots\<version>`）；`DSH_GIT_SLOTS_ROOT` 是离线覆盖、`DSH_GIT_SLOTS_REGISTRY` 换镜像 | **首次跑门禁会联网一次**（约 1–2 s）；"装了解析不到"仍必须 FAIL，不许退化成 SKIP（见 §5） |
 | `test/generate.mjs` | AI 起草提交信息的纯单元：路由解析、prompt、截断、流式拼装、失败码 | 不 spawn git |
 | `test/render.mjs` | 双界面真实 React SSR：两个座位、提交区控件、diff 解析器与行渲染、`act()` 回传 | 需要 `react`/`react-dom`，见 §5 |
 | `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、重命名配对、删除、二进制、截断、校验） | 需要 spawn git，不在 `npm test` 内 |
@@ -34,7 +35,7 @@
 ## 2. 常用命令
 
 ```powershell
-npm test                  # smoke → host-mount → slot-mount → generate → render（不 spawn git）
+npm test                  # smoke → host-mount → slot-mount → generate → render（不 spawn git；0.2.1+ 首跑会联网取 slots 包一次）
 node test/smoke.mjs       # 单独跑；改任何文件后最快的门禁
 npm run test:diff         # 端到端 diff（必须能 spawn git，见 §8）
 npm run test:commit       # 端到端 commit
@@ -49,6 +50,12 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 `app.asar` 里的宿主包提取到 `%TEMP%\dsh-git-host-asar\<hash>`（首次约 6 秒 / 7800 个文件，之后走缓存，
 宿主换版后 key 变化自动重提取）；`$env:DSH_GIT_DSH_ROOT` 覆盖根，`$env:DSH_ASAR` 指定归档。
 `npm test` 在真 desktop 宿主上因此不再 SKIP —— 前提是那台机器装着 dsh（CI 上仍然 SKIP + 退 0）。
+
+**0.2.1+ 的 slot-core 获取**：0.2.1 起宿主把 `@deepseek-ai/dsh-client-ui-slots` 内联进 `dsh-web-frontend`
+的 shell bundle，安装树（profile / `app.asar`）里不再有它，而 renderer 仍 `require` 它。`test/host-slots.mjs`
+按安装 renderer 的**同版本**从 npm 取真包（`dist.integrity` SRI 校验，缓存到 `%TEMP%\dsh-git-slots\<version>`，
+秒级、只下一次）；完全离线用 `$env:DSH_GIT_SLOTS_ROOT=<解包目录>`，换镜像用 `$env:DSH_GIT_SLOTS_REGISTRY`。
+"装了解析不到"仍 FAIL + 退 1，不许退化成 SKIP（`COMPAT.md` §7.1）。
 
 没有 lint、没有 typecheck、没有 PR 检查（`.github/` 里只有一条发布 workflow，见 §7）；
 没有 eslint/prettier/tsconfig。**门禁仍然是测试**，别指望自动化兜底。
@@ -212,6 +219,10 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   两个守护**空转了一整轮**（`COMPAT.md` §5.4 记的是同类事故的第二次：第一次是 `slots` 版本探测被捆进 `try`）。
   反证配方（都已实测）：`DSH_HOME=<空目录> DSH_ASAR=<不存在的路径>` → SKIP+0；`DSH_GIT_DSH_ROOT=<空目录>`
   → SKIP+0；`DSH_ASAR=<一个非 asar 文件>` → FAIL+1。
+- **slot-core 的获取路径也是守护的一部分**（0.2.1 起）：`test/slot-mount.mjs` 的 slots 由
+  `test/host-slots.mjs` 提供（安装树 → `DSH_GIT_SLOTS_ROOT` → 按版本缓存 → npm 同版本真包）。
+  **不允许**用 stub 假实现顶替；取不到时打印三条可操作修法并 FAIL + 退 1。新增反证：
+  空 `DSH_GIT_SLOTS_ROOT` / 断网 registry / `DSH_ASAR=<非 asar>` 都必须是 exit 1（见 `COMPAT.md` §7.1）。
 - **必须 spawn git 的**（`test/diff.mjs` / `test/commit.mjs`）单独成文件并加 `npm run test:xxx`，
   不要塞进 `npm test`——沙箱里子进程管道 stdio 会 EPERM（见 §8）。
 - `test/render.mjs` 需要一份真实 `react`/`react-dom`，解析顺序：`DSH_GIT_REACT_ROOT` → `$DSH_HOME/profiles/web/node_modules`
@@ -244,7 +255,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.7.1）。
+1. 改 `package.json` 的版本号（当前 0.7.2）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
@@ -319,7 +330,8 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   `profiles/web/node_modules/@xia-sc/dsh-git` 指向本目录的链接。改完**必须重启 `dsh web`**——
   运行中的进程用的是启动时组合的旧行名，重启前浏览器会加载到"自注册 id 与 boot 表条目 id 不一致"的 bundle，
   客户端半边静默不挂载（宿主半还在，端点照常 200，容易误判）。
-- 真实 GUI 在 **`http://127.0.0.1:19387`**（`DSH_WEB_URL`；旧文档里的 3080 属于 web/CLI 版，本机已无监听）。
+- 真实 GUI 在 **`$env:DSH_WEB_URL`**（2026-10 宿主 0.2.1-rc.2 实测是 **`http://127.0.0.1:1680`**；0.2.0 曾是 19387，
+  3080 属于 web/CLI 版，两者本机都已无监听）。desktop 以 `--port 0` 启动，**端口每进程都可能不同，别写死**。
   新起的无头浏览器**默认过不了认证**，而且**桌面版不再打印带 token 的 URL**（launch token 由 Electron
   主进程经 IPC 直接交给内嵌窗口，`dsh-desktop-host/lib/index.js:337-344`）：要么用已登录的浏览器
   （如 MCP 的 playwright 实例），要么**自签一个会话 cookie** —— 做法见 `AUDIT-0.2.0-rc.2.md` §一
@@ -347,6 +359,10 @@ explicit `stage`/`commit`/`checkout` endpoints. Client edits apply on page refre
 `dsh web` restart. Tests are the only gate: `npm test` runs the five git-free suites (smoke, host-mount,
 slot-mount, generate, render); host discovery (including extraction of the desktop app's `app.asar`) lives
 in `test/host-root.mjs` — no host install skips, an installed-but-unresolvable host fails loudly;
+`test/host-slots.mjs` acquires the host's `dsh-client-ui-slots` at the installed renderer's version (dsh 0.2.1
+inlines it into the shell bundle, so the installed tree no longer ships it): installed tree first, then
+`DSH_GIT_SLOTS_ROOT`, then a per-version cache, then npm with SRI verification — and a machine that has a
+host but cannot run the guard fails loudly instead of skipping;
 `npm run test:diff`
 and `npm run test:commit` are real-git end-to-end tests that need to spawn git (blocked in a confined
 sandbox) and are therefore kept out of `npm test`. The one CI workflow (`.github/workflows/publish.yml`)

@@ -22,12 +22,16 @@
    （模拟 CI）；`DSH_GIT_DSH_ROOT=<空目录>` → **SKIP + exit 0**（沿用旧配方，指向空目录证明跳过路径还在）；
    `DSH_ASAR=<一个非 asar 的文件>` → 两个守护都 **FAIL + exit 1**（"有安装却读不到"必须响）。
 2. **宿主半是否活着**：拿 `dsh web` 启动时打印的 token 换 cookie，再打一次端点。
+   **（2026-10 · 0.2.1-rc.2 现状）** 桌面版端口是 **`$env:DSH_WEB_URL` 里的 1680**（desktop 以 `--port 0` 启动，
+   每进程可能不同），且桌面版**没有"打印出来的 URL"**（见本节后面的补充）——下面的 `3080` 只是 web/CLI 版示例，
+   桌面版把 `$base` 换成 `$env:DSH_WEB_URL`。详见 §7.2。
    `401 unauthorized` = 路由在、围栏在（正常）；`404` = 路由压根没挂上；`200` + 正常 JSON = 宿主半完好。
 
    ```powershell
-   $null = Invoke-WebRequest -Uri "http://127.0.0.1:3080/?token=<dsh web 打印的 token>" -SessionVariable sess
-   Invoke-WebRequest -Uri "http://127.0.0.1:3080/dsh-git-rpc/status" -Method POST -ContentType application/json `
-     -Headers @{Origin="http://127.0.0.1:3080"} -WebSession $sess -SkipHttpErrorCheck `
+   $base = $env:DSH_WEB_URL   # 桌面版 0.2.1 实测 http://127.0.0.1:1680；web/CLI 版常见 3080
+   $null = Invoke-WebRequest -Uri "$base/?token=<dsh web 打印的 token>" -SessionVariable sess
+   Invoke-WebRequest -Uri "$base/dsh-git-rpc/status" -Method POST -ContentType application/json `
+     -Headers @{Origin="$base"} -WebSession $sess -SkipHttpErrorCheck `
      -Body '{"type":"client-request","rpcId":"probe","method":"status","payload":{"args":{"cwd":"<绝对路径的仓库>"}}}'
    ```
 
@@ -63,7 +67,9 @@
    `lib/client.js` 逐字节相同（§6.2）。**注意比对用的是装机路径那份**（`profiles/desktop/node_modules/@xia-sc/dsh-git/`），
    不要拿仓库工作区那份：工作区是 CRLF，`rev` 和字节数都不一样（§6.1）。
 
-5. **真 GUI 复现**：`$env:DSH_GIT_UI_URL="http://127.0.0.1:3080/?token=<token>"; node test/ui/verify-diff.mjs`。
+5. **真 GUI 复现**：`$env:DSH_GIT_UI_URL="$env:DSH_WEB_URL/?token=<token>"; node test/ui/verify-diff.mjs`。
+   **（2026-10 · 0.2.1）** 端口从 `$env:DSH_WEB_URL` 取（本轮实测 1680，0.2.0 是 19387）；桌面版没有带 token 的 URL，
+   认证改走 `DSH_GIT_UI_STORAGE_STATE` 或自签 cookie（见 §7.2 与 `AUDIT-0.2.1-rc.2.md` §3.4）。
    它第一句就要求 `[data-dsh-git="dock"]` 存在，所以只要它跑到后面，就说明胶囊回来了。
    （沙箱里 playwright 起 Chrome 会 `spawn EPERM`，见 `AGENTS.md` §8。）
 
@@ -409,7 +415,8 @@ diff 面板、信封 schema 全部在真宿主/真浏览器里验过）。本节
   JSON header 在 offset 16，递归 `files` 树），或走 DSH 自己的文件层。另：asar 里**没有任何 `.d.ts`**
   （全树 0 命中），类型层证据只能用宿主自己生成的 `dsh-tool-cordis/lib/types/api-catalog.js`
   与 `dsh-llm/lib/typert.host.js` 的内嵌声明。
-- **GUI 端口 3080 → 19387**（`DSH_WEB_URL`；`Get-NetTCPConnection -LocalPort 3080` 为空）；
+- **GUI 端口 3080 → 19387**（`DSH_WEB_URL`；`Get-NetTCPConnection -LocalPort 3080` 为空；**0.2.1-rc.2 起再变为
+  `DSH_WEB_URL` 里的 1680，见 §7.2**）；
   活的 profile 是 **`desktop`**（`DSH_PROFILE=desktop`），不是 `web`。
 - **插件是 npm 安装副本，不是 `link:`**：`profiles/desktop/package.json` 里写的是 `@xia-sc/dsh-git: ^0.7.0`
   （web profile 里那条 `link:E:/dsh/plugin/dsh-git` 与本轮无关）。⇒ **改仓库不会自动生效**；
@@ -491,3 +498,122 @@ diff 面板、信封 schema 全部在真宿主/真浏览器里验过）。本节
 - **`test/ui/verify-diff.mjs` 已适配 desktop shell**：自己关首启弹层、整条 `/dsh-git-rpc` 通道夹具化
   （不再要求工作区是脏仓库）、没有工作区选择器时按会话自身 cwd 继续；`live` 模式在干净工作区上明确
   `NO CHANGES TO SHOW` + exit 2，而不是超时（§0 第 5 步）。实测：真 0.2.0-rc.2 GUI 上 fixture 模式 exit 0。
+
+## 7. dsh desktop ≥ 0.2.1-rc.2
+
+2026-10 全量审计（插件 **0.7.1** × 宿主 **desktop 0.2.1-rc.2**）：**运行时零回归，`lib/` 零改动**；宿主半、
+浏览器半、LLM 每个契约都在真宿主 / 真 GUI 上复核通过。**唯一要动的是测试基建**——0.2.1 又改了客户端发行形态，
+见 §7.1。完整证据（逐项文件行号与复核命令）见仓库里的 `AUDIT-0.2.1-rc.2.md`。
+
+体例同上：以下记的是"再改回去就会静默坏"的判据、本轮新增的发行形态变化、实测数字，以及别忘了的取证陷阱。
+
+### 7.1 发行形态再变：`dsh-client-ui-slots` 被内联进 shell bundle（**`npm test` 第一次跑就红**）
+
+- **症状（第一次在 0.2.1 上跑门禁）**：`npm test` 在 `test/slot-mount.mjs` 抛
+  `Error: cannot resolve "@deepseek-ai/dsh-client-ui-slots" — tried <asar 提取根>\dsh\node_modules, …`，**exit 1**。
+  其余四套（smoke / host-mount / generate / render）都过；真 GUI 上插件本身**完全正常**。
+- **证据**：0.2.1 的 asar 全树（18,309 条路径）与提取出的 304 个 `@deepseek-ai` 包里**都没有**
+  `dsh-client-ui-slots`（也没有 `dsh-client-ui-primitives` / `dsh-client-ui-dockkit` / `dsh-client-store`）；
+  `dsh-client-ui-renderer/package.json` 把 slots 从 dependencies 挪到 **devDependencies**，但
+  `renderer/lib/client.js:14` **仍 `require("@deepseek-ai/dsh-client-ui-slots")`**。
+  浏览器里由 shell bundle 的**共享模块表**供给：`dsh-web-frontend/dist/assets/index-*.js` 里
+  `function SZ(){return {react, "react/jsx-runtime", "react-dom", "@deepseek-ai/cordis", zod, …,
+  "@deepseek-ai/dsh-client-ui-slots":SI, "@deepseek-ai/dsh-client-ui-primitives":zU,
+  "@deepseek-ai/dsh-client-ui-dockkit":xZ}}`，启动时 `modules = r.create({boot, staticModules: SZ(), …})`。
+- **根因**：`test/slot-mount.mjs` 在 node 里驱动真 `SlotCore`，只能在安装树里解析包；0.2.1 不再发布它，
+  而"页面里的共享模块表"在 node 里不存在。
+- **修法（已落，写作用域 `test/`）**：新增 **`test/host-slots.mjs`**，按**安装的 renderer 版本**获取同版本真包：
+  ① 安装树（≤0.2.0 的旧布局，离线）→ ② `DSH_GIT_SLOTS_ROOT`（权威覆盖；值不可用 = 失败，绝不静默回退）→
+  ③ `%TEMP%/dsh-git-slots/<version>` 缓存 → ④ npm registry（元数据 + tarball + `dist.integrity` SRI 校验，
+  只解包 `package.json` 与 `lib/**`）。`slot-mount` 把 slots 从"可选探针"改为**硬依赖获取**，
+  `seed` 表只登记 bare specifier（与 shell 表一致），banner 标出来源（`installed` / `override` / `cache` / `registry`）。
+  **没有引入任何假 slots 实现**——renderer 拿到的仍是真 `SlotCore`。
+- **代价（知情）**：宿主换版后**首次**跑门禁要联网一次（约 1–2 s、31,964 B、SRI 校验），之后走缓存；
+  完全离线用 `DSH_GIT_SLOTS_ROOT=<解包目录>`。CI（`ubuntu-latest`，无宿主）仍然 SKIP，不会触发下载。
+  `DSH_GIT_SLOTS_REGISTRY` 可换镜像（或设成死地址来反证失败路径）。
+- **守护测试**：`test/slot-mount.mjs`（23 项全过、`real SlotRegistry 0.2.1-rc.2`）+ 以下反证配方（都已实测）：
+  - `DSH_GIT_SLOT_FIXTURE=embedded node test/slot-mount.mjs` → **exit 1，9 项失败**（默认夹具全过，绿灯不是空转）；
+  - `DSH_GIT_DSH_ROOT=<空目录>` → **SKIP + exit 0**（"完全没装"的既有契约未破）；
+  - 空 `DSH_GIT_SLOTS_ROOT` / 断网 registry / `DSH_ASAR=<非 asar 文件>` → **exit 1**（"装了解析不到"必须响）。
+
+### 7.2 环境事实（**取代 §6.1 的桌面事实**）
+
+- **GUI 端口是 `DSH_WEB_URL` 里的 1680**（0.2.1 的 desktop 以 `--port 0` 启动，每进程临时端口；
+  0.2.0 的 19387 / web 版的 3080 在本机都已无监听）。取证先读 `$env:DSH_WEB_URL`，别再写死。
+- **宿主包仍全在 `app.asar`**：`app.asar\dsh\node_modules\@deepseek-ai` 共 **304** 个包（296 个版本号 = `0.2.1-rc.2`，
+  其余是第三方依赖）。`profiles/{desktop,web}/node_modules/@deepseek-ai` 仍只有 `cordis`/`cosmokit` 之类，`profiles/node_modules` 为空。
+- **cordis**：asar 内 **4.0.5**、profile 里那条 4.0.4；插件依赖 `^4.0.1`，**满足**。
+- **装机副本 = 仓库 `lib/` 字节**：`profiles/desktop/node_modules/@xia-sc/dsh-git` 版本号仍是 **0.7.0**，但
+  `lib/client.js`（127448 B）、`lib/index.js`（61594 B）、`cordis.patch.yml`（751 B）与仓库 **LF 归一后 sha256 完全相同**；
+  `v0.7.0..HEAD` 的 `lib/` 零 diff（0.7.1 只改文档/测试/版本号）。⇒ 核对 rev 与送达字节仍用**装机路径**那份，
+  工作区副本只是 CRLF（130680 B）。
+- **`requiredStartupEntryIds` 新增 `web-runtime`**：`{agent-loop, webserver, web-runtime, modules, connection,
+  headless-runner, acp, sdk-jsonrpc-server}`；**`llm` 仍不在其中**，非必需行失败仍只 `warn(...)` → stderr。
+  §4.5/§5.1 的"PENDING 不消失界面"判据继续成立。
+- **0.2.1 首启「预览版说明」弹层已不可见**：`[role="dialog"]`/`[aria-modal]`/「继续」按钮全为 0，
+  改为 hero 标题组的常驻「预览版」徽标。`test/ui/verify-diff.mjs` 的关弹层探测会**静默跳过**（无害）。
+- **认证**：桌面版仍**没有打印出来的 token URL**；要么已登录浏览器，要么自签 cookie。0.2.1 的 cookie 形状未变：
+  名 = `dsh-auth-` + base64url(sha256(authority))，值 = `v1.<base64url(JSON{version,authority,issuedAt,expiresAt})>.<HMAC-SHA256>`，
+  **authority 是 `host:port`**（HTTP 下；HTTPS 下是 origin），所以换端口 cookie 即失效。
+
+### 7.3 已复核、必须保持的耦合（0.2.1-rc.2 逐项未变）
+
+- **自持路由仍必需**：connection 插件自己的 `inject = ["credentials"]`，`rpc.handle()` 的
+  `register(owner, …)` 在 `owner.effect(() => owner.webServer.register(…))` 里用**它自己的** ctx，
+  外部插件调用时仍拿不到 `webServer` ⇒ `cannot get property "webServer" without inject`。**§2 的设计不要改回去。**
+- **`requestRejection` 仍是数字三态**：公开方法把内部 `admit()` 的 `{rejection:401|403}` / `{peer}` 投影回
+  `401 | 403 | undefined`。`res.statusCode = rejection` 继续按 number 用。
+- **`WebRoute` 仍无 `method`**：`{kind, path, handler}`，`exact`/`prefix`，前缀匹配
+  `pathname === prefix || startsWith(prefix + "/")`，最长前缀优先；重复 `(kind,path)` 抛错。
+- **手写信封仍过宿主 zod schema**：`test/host-mount.mjs` 在 0.2.1 上通过（`client-request` / `failure` /
+  `unknown-endpoint` / 通道外 404）。失败信封仍必须 `code:"internal"` + record 型 `details`。
+- **客户端入口入选条件未变**：`entry.options.name !== entryName || entry.fiber === void 0 || entry.disabled`
+  才跳过 ⇒ PENDING 的行照样进 boot 图、照样发 `/plugins` 路由。**web 启动审计仍在**：
+  非 active fiber 会 `throw new Error("web boot: N entries did not activate …")`（缺服务是响的）。
+- **`artifactRevision()` 未变**：`framedHash("plugin-artifact", [mtimeMs, ctimeMs, size])`，sha1 前 12 hex。
+- **会话快照未变**：`SessionListState = {ids, byId, phase, projectionsBySession}`；`byId[].cwd` 仍填
+  （条件展开的可选字段）、`retainedBy` 计数、`projectionValues`、`projectionsBySession[id].values` 都在。
+- **LLM 契约未变**：`GenerateOptions`（0.2.1 多了可选 `reasoningEffort/tools/toolHistory/temperature/stop/purpose`，
+  插件不发即默认）、`RequestUserInput { role:'user', content, id?: never, source?: never }`、
+  `StreamChunk`（`text-delta{index,text}` / `block-end{index,block}` / `finish{reason}` 全在，插件的拼装代码逐字段对齐）、
+  `FinishReasonMap`、`sessionId` 仍只在存在时被 `dsh-llm-pi-ai` 转发、checkpoint 仍会先 flush 该会话。
+- **`dsh.client.inject` 的 6 个包名**在 0.2.1 全部存在、`platform=web`、`exports["./client"]` 可解析。
+- **主题 token 零缺失**：插件用到的 **17 个**（16 个 `--dsw-alias-*` + `--dsw-shadow-lv2`）在 0.2.1 真页面全部解析为具体值。
+
+### 7.4 本轮实测（949×861 视口、浅色主题、hero 空会话；数字是"量出来的"，不是契约）
+
+- **几何**：单栏 **400×506**；两栏 **862 = 面板左栏 300 + 边框 2 + diff 560**；两栏高度
+  **619.9 = min(72vh=619.92, 100vh−184=677)**，`style.height === style.maxHeight`；`bottom:168` **精确**（693 = 861−168）。
+- **`bottom:168` 的已知边界仍在**：hero 空会话 composer 栈 `[313.5, 587.5]`、面板 `[187, 693]` ⇒ 盖住输入框
+  （本视口重叠 **274px**）；常规会话（0.2.0 实测）重叠 0px。§4.6/§5.2 的取舍不变：这是静态 `bottom` 的既有局限。
+- **胶囊宽度**：`dock-row` 实测 **712px** = `--dsh-composer-card-max-width` 的解析值（
+  `calc(clamp(680px, calc(873px*0.64), 920px) + 32px)`）⇒ 变量存在且被正确消费，`778px` 只是 fallback。
+- **层叠未变**：`shell.overlay` 容器 z20 / `pointer-events:none`，宿主 frame **无 transform**，
+  插件面板 `position:fixed` + z30 ⇒ 仍以视口为基准、在 overlay 内最高。
+- **宽度手柄**：窄视口下默认宽先被 `clampDiffWidth` 钳到上限（929 宽时 862→883.5 / diff 560→581.5）；
+  缩小到不触发钳制后**拖 +120 → 面板与 diff 各精确 +120.00**。已知小瑕疵：钳制上限未取整，可出现 `.5px` 宽度。
+- **diff 交互**：未跟踪 probe `+6 −0`（19 行）与头部一致；换行 `scrollWidth 2249 → 555`（`pre→pre-wrap`）；
+  收起回单栏。**空侧按钮是 `disabled`**（`title="这一侧没有改动"`）⇒ `diff-empty` 只在"空侧被选中"时渲染、
+  正常路径上不可达——这是 `lib/client.js:2021-2039` 的**有意设计**，别当成 bug 改掉。
+- **既有边界（非 0.2.1 回归）**：未跟踪目录混入二进制文件时，宿主 `isBinaryDiff` 整侧判 `binary:true`，
+  同目录文本 diff 被整体隐藏（`lib/index.js:860-862`）。
+
+### 7.5 守护它的测试
+
+- **`test/host-slots.mjs`（新）**：见 §7.1；`test/slot-mount.mjs` 已改为硬依赖它，`npm test` 五套全绿。
+- **反证配方**（都已实测）：见 §7.1 三条；另外"用真实解包目录作 `DSH_GIT_SLOTS_ROOT`"应 exit 0（离线路径），
+  "模拟 ≤0.2.0 安装树自带 slots"应走 `installed` 且**不联网**。
+- **`test/ui/verify-diff.mjs` 的桌面版适配**（静态结论，未跑浏览器）：默认 `http://127.0.0.1:3080/` 必失效
+  （desktop 用 `--port 0`，本轮 1680）；桌面版无带 token URL（认证走 storage-state / 自签 cookie，
+  cookie 绑 `host:port`）；0.2.1 首启弹层不弹（探测空转，无害）；`button[aria-label="选择工作区"]` 仍在。
+- **发布前必须补跑**：`npm run test:diff` / `test:commit` / `test:ui:settings`——本会话沙箱
+  `spawn EPERM`（§8 的既有环境限制），不能视为通过。
+
+### 7.6 别忘了的判据
+
+- **探针必须带端点段**：`POST /dsh-git-rpc` 返回 404（插件自己的 `invalid-request`），别据此判"路由没挂"；
+  未知端点要 body 的 `method` 与 path 一致才会走到 `details.code:"unknown-endpoint"`（否则是 method mismatch 的 `gateway/bad-request`）。
+- **桌面版拿不到"打印出来的 token"**：用已登录浏览器，或自签 cookie（§7.2）。
+- **asar 里的东西读法不同**：`Get-ChildItem` / `glob` / `grep` 都穿透不了它；要么自写 asar 读取器，
+  要么复用 `test/host-root.mjs` 的提取缓存（首次约 9 s / 9970 个文件）。
+- **换版后先跑 `npm test`**：0.2.1 这一次就是靠 slot-mount 的**红**发现的发行形态变化；别因为"其余全绿"忽略它。

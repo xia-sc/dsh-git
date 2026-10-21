@@ -53,10 +53,23 @@
 // SKIP covers "no profile" ONLY — never "the profile is there but a piece of
 // the host could not be resolved". That distinction matters: this file exists
 // to catch silent host-side regressions, so a resolution failure on a machine
-// that DOES have a profile must stay loud. Concretely, the cosmetic
-// `dsh-client-ui-slots` version probe is optional (prints `slots@?`), and the
-// renderer's own `require("@deepseek-ai/dsh-client-ui-slots")` then fails the
-// run if the package really is gone. See the probe's comment below.
+// that DOES have a profile must stay loud.
+//
+// Slot core in dsh >= 0.2.1
+// -------------------------
+// dsh 0.2.1 inlined `@deepseek-ai/dsh-client-ui-slots` (with primitives /
+// dockkit / client-store) into `dsh-web-frontend/dist` and hands it to the page
+// through the shell bundle's shared module table. The installed host therefore
+// no longer contains the package, while the renderer still does
+// `require("@deepseek-ai/dsh-client-ui-slots")` — the shell table answers that
+// require in a browser, and node has no page. This test resolves the core in
+// two steps: from the installed host tree when the host still vendors it
+// (<= 0.2.0, offline), otherwise through `test/host-slots.mjs`, which loads the
+// SAME version the installed renderer was built with from npm (cached per
+// version). No fake slot implementation is ever registered — the renderer talks
+// to the real `SlotCore`. `DSH_GIT_SLOTS_ROOT` points at an extracted copy for
+// offline runs; a value that is not a real package fails loudly instead of
+// falling back to a skip.
 //
 // SSR is not a browser
 // --------------------
@@ -70,8 +83,8 @@
 // faithful stand-in for the skipped effect, not an escape hatch — which is what
 // makes the file a guard: see the falsification recipes below.
 //
-// Falsification recipes (both verified; neither needs lib/ touched)
-// ----------------------------------------------------------------
+// Falsification recipes (all verified; none needs lib/ touched)
+// -------------------------------------------------------------
 //   1. assertion input — `DSH_GIT_SLOT_FIXTURE=embedded node test/slot-mount.mjs`
 //      spoofs `retainedBy: { gateway: 1 }`. The mainView gate then refuses to
 //      bind, and 9 checks fail (dock markup / title / aria-label / locale key /
@@ -81,6 +94,12 @@
 //      name follows the copy, so `slots.inject` for the real seat never fires:
 //      8 checks fail ("… has exactly one entry — got 0", "dock markup rendered",
 //      the title check, …). Delete the copy afterwards.
+//   3. slot-core acquisition — `DSH_GIT_SLOTS_ROOT=<empty dir> node
+//      test/slot-mount.mjs` makes the authoritative override unusable, so the
+//      run prints the actionable acquisition failure and exits 1: a host IS
+//      installed, so the guard must not degrade to a skip. Same shape with a
+//      dead `DSH_GIT_SLOTS_REGISTRY=http://127.0.0.1:9` once the per-version
+//      cache (printed in the error) has been removed.
 //
 // Assumption a future dsh version could break: this file drives the renderer
 // through its PUBLIC seams only (`renderer.apply`, `ctx.slots.register/
@@ -92,6 +111,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { hostRoots, unresolvedHost } from "./host-root.mjs";
+import { ensureSlotsPackage } from "./host-slots.mjs";
 
 // ── package resolution ──────────────────────────────────────────────────────
 // Profile-first, like test/host-mount.mjs and test/render.mjs:
@@ -178,30 +198,55 @@ function skip(reason) {
 }
 
 // Everything the harness needs, resolved before a single line runs. A missing
-// piece is a SKIP, never a failure.
+// piece is a SKIP, never a failure — unless a dsh host is installed, in which
+// case the catch below turns it into a FAIL (see the header's SKIP contract).
 let cordisEntry;
 let rendererEntry;
 let pluginEntry;
 let react;
 let reactDom;
 let reactDomServer;
+let slotsPackage;
+let slotsImpl;
 const dshVersion = { renderer: undefined, slots: undefined };
 try {
   cordisEntry = locate("@deepseek-ai/cordis").file;
   rendererEntry = locate("@deepseek-ai/dsh-client-ui-renderer/client").file;
-  // `@deepseek-ai/dsh-client-ui-slots` is a nested dependency of the bundle; its
-  // profile junction can dangle, so widen the roots through the renderer that
-  // DID resolve before asking for it.
-  try {
-    locate("@deepseek-ai/dsh-client-ui-slots/package.json");
-  } catch {
-    addVendoredRoots(rendererEntry);
-  }
   pluginEntry = pathToFileURL(join(import.meta.dirname, "..", "lib", "client.js")).href;
   react = locate("react");
   reactDom = locate("react-dom");
   reactDomServer = locate("react-dom/server");
   dshVersion.renderer = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-renderer/package.json").file, "utf8")).version;
+  // The slot core: the installed host first (<= 0.2.0 vendors it), otherwise the
+  // version-matched npm package through test/host-slots.mjs (dsh >= 0.2.1
+  // inlines it into the shell and ships no copy — see the header). The package
+  // used to be a nested dependency of the host bundle and a profile junction for
+  // it can dangle, so widen the roots through the renderer that DID resolve
+  // before asking for it.
+  slotsPackage = await ensureSlotsPackage({
+    version: dshVersion.renderer,
+    log: (line) => console.log(line),
+    locateInstalled: () => {
+      try {
+        return { dir: locate("@deepseek-ai/dsh-client-ui-slots/package.json").root };
+      } catch (miss) {
+        addVendoredRoots(rendererEntry);
+        try {
+          return { dir: locate("@deepseek-ai/dsh-client-ui-slots/package.json").root };
+        } catch {
+          throw miss;
+        }
+      }
+    }
+  });
+  dshVersion.slots = slotsPackage.version;
+  // An installed copy keeps the historical `createRequire` load; an acquired one
+  // is the published ESM package, so it is imported. Either way the renderer's
+  // `require("@deepseek-ai/dsh-client-ui-slots")` is answered with the REAL
+  // core — this test never registers a fake slot implementation.
+  slotsImpl = slotsPackage.source === "installed"
+    ? createRequire(join(slotsPackage.dir, "anchor.cjs"))("@deepseek-ai/dsh-client-ui-slots")
+    : await import(pathToFileURL(slotsPackage.entry).href);
 } catch (error) {
   // A machine WITH a host install must fail loudly when a piece cannot be
   // resolved — this file is the browser half's version guard, and a guard that
@@ -214,23 +259,6 @@ try {
     process.exit(1);
   }
   skip(error.message);
-}
-
-// The slots VERSION is cosmetic — it rides only the banner printed at the end of
-// this file — so it must never gate the run. It used to sit inside the `try`
-// above, which made a host packaging change that stopped vendoring
-// `@deepseek-ai/dsh-client-ui-slots` (it moved from a top-level profile link to
-// a nested dependency of the dsh CLI in 0.1.7-rc.1, reached here only through
-// the `addVendoredRoots` fallback above) collapse into `SKIP` + exit 0 — a guard
-// against silent failure failing silently. Verified before the change: forcing
-// `locate()` to refuse that one spec printed `SKIP: …` and exited 0. Now the
-// version merely prints as `?` and the run continues; if the package is
-// genuinely absent, the renderer's own
-// `require("@deepseek-ai/dsh-client-ui-slots")` fails loudly instead.
-try {
-  dshVersion.slots = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-slots/package.json").file, "utf8")).version;
-} catch {
-  dshVersion.slots = "?";
 }
 
 if (!existsSync(react.file) || !existsSync(reactDom.file)) {
@@ -293,7 +321,11 @@ const seedWords = new Map([
   ["react/jsx-dev-runtime", () => createRequire(join(dirname(react.file), "anchor.cjs"))("react/jsx-dev-runtime")],
   ["use-sync-external-store", () => React],
   ["use-sync-external-store/shim", () => React],
-  ["use-sync-external-store/shim/with-selector", () => React]
+  ["use-sync-external-store/shim/with-selector", () => React],
+  // dsh >= 0.2.1 answers this from the shell's shared module table; here it is
+  // the version-matched real package (installed, cached or fetched above). The
+  // shell table carries the bare specifier only, so this table matches it.
+  ["@deepseek-ai/dsh-client-ui-slots", () => slotsImpl]
 ]);
 const seedCache = new Map();
 function moduleTable(spec) {
@@ -461,7 +493,7 @@ function check(label, condition, detail) {
 
 const render = () => renderToStaticMarkup(app.slots.renderSlot("root", {}));
 
-console.log(`slot-mount against @deepseek-ai/dsh-client-ui-renderer@${dshVersion.renderer} + dsh-client-ui-slots@${dshVersion.slots}`);
+console.log(`slot-mount against @deepseek-ai/dsh-client-ui-renderer@${dshVersion.renderer} + dsh-client-ui-slots@${dshVersion.slots} (${slotsPackage.source})`);
 
 // 1. Both seats are declared with the kind/scope the host declares. A scope flip
 //    on the dock (root instead of session) is what silently killed the pill in
