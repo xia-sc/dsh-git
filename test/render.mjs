@@ -550,7 +550,7 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     'data-dsh-git="output"',
     "action.fetch",
     "action.pull",
-    "action.push",
+    "action.commitPush",
     "action.stage",
     "action.generate",
     "commit.placeholder",
@@ -565,6 +565,19 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     previous = at;
   }
   console.log("body order:", order.length, "blocks in workflow order");
+}
+
+// The network toolbar's third button is the one-click "commit & push": it stages
+// everything, commits the composer's message, then pushes. With an empty draft
+// it must render disabled (the plain Commit button below keeps its own rule).
+{
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  const at = html.indexOf("action.commitPush");
+  if (at < 0) throw new Error("the network toolbar must offer commit-and-push");
+  const start = html.lastIndexOf("<button", at);
+  const tag = html.slice(start, html.indexOf(">", at));
+  if (!tag.includes("disabled")) throw new Error("commit-and-push must be disabled while the commit message is empty");
+  console.log("commit-and-push: present in the toolbar, disabled on an empty draft");
 }
 
 // The primary buttons must use the harness's contrast pairing. `brand-primary`

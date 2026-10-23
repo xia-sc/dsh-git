@@ -8,9 +8,9 @@ in real time** — click a different session/workspace in the sidebar and the
 panel rebinds to that repository instantly.
 
 **Workflow supported:** branch switch · fetch · pull (fast-forward only) ·
-stage all · commit (with an AI-drafted message) · push · status · recent
-commits · uncommitted-file list · **click a change to see its diff** ·
-new-branch-from-base.
+stage all · commit (with an AI-drafted message) · push · **one-click commit &
+push** · status · recent commits · uncommitted-file list · **click a change to
+see its diff** · new-branch-from-base.
 
 ## UI
 
@@ -20,7 +20,8 @@ new-branch-from-base.
   switcher with its **dirty-tree pre-check** (selecting a branch while
   uncommitted changes exist warns with the affected files instead of switching,
   plus a "switch anyway" escape hatch) → a **network toolbar** (Fetch / Pull /
-  Push, three equal columns, Push being the primary button) → a **commit card**
+  **Commit & push**, three equal columns; Commit & push is the primary button:
+  stage everything, commit the input message, then push) → a **commit card**
   (Stage all + draft basis + "✨ AI draft" in equal columns, the message input
   below it and the commit button) → two list cards. Every button group is split
   evenly instead of sizing itself to its label.
@@ -109,6 +110,13 @@ the first selection expands the list to its full length.
 ### The commit area and AI drafting
 
 The commit area follows the real order of operations: **stage all → draft → commit**.
+
+The toolbar's **Commit & push** button is the one-click version of the same
+flow: stage everything, commit the composer's message, then push. It stays
+disabled without a message or with a clean tree; the **Commit** button below
+keeps its original meaning — **it commits what is staged and never stages
+implicitly**. When the push fails after the commit landed, the notice says so
+("Committed, but push failed").
 
 - **Stage all**: `git add --all` (deletions and untracked files included).
   Disabled while the tree is clean. This is the answer to "only unstaged
@@ -271,7 +279,9 @@ shell metacharacters, and leading dashes are all recorded verbatim.
   error the user resolves in their own tooling.
 - **commit does not stage**: it commits what is staged. To commit everything at
   once, use the commit area's **Stage all** button (`git add --all`) rather than
-  making commit stage implicitly.
+  making commit stage implicitly. The toolbar's **Commit & push** is an explicit
+  composite action (stage all → commit → push); it does not change what Commit
+  itself does.
 - **AI drafting sends the change set's diff to whichever model provider you
   configured** — possibly a third-party gateway. It only happens when you click
   "✨ AI draft"; the plugin itself never calls the network. The diff is

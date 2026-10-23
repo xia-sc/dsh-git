@@ -118,6 +118,9 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 ### 3.7 行为边界（README 已承诺，别悄悄改）
 
 - **`commit` 不隐式暂存**：只提交已暂存内容；想全提交用「暂存全部」（`git add --all`）。
+  顶栏「提交并推送」（`action.commitPush`）是**显式声明的复合动作**：暂存全部 → 提交 → 推送，
+  不改「提交」本身的语义；推送失败时提交已落地，用 `output.commitPushCommittedNotPushed` 明确提示。
+  新增 store 动作时 zh/en 的 `action.*` / `busy.*` / `output.*` 三个键都要补齐（`test/render.mjs` 按渲染文本查按钮）。
 - **`pull` 恒 `--ff-only`**：不产生意外合并提交。
 - **绝不修改 git config**；缺 `user.name/email` 时报 `missing-author`，不要替用户补写。
 - **绝不碰凭据**：push/pull 用系统凭据管理器 / SSH agent。
@@ -255,7 +258,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.7.2）。
+1. 改 `package.json` 的版本号（当前 0.7.3）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
@@ -318,10 +321,12 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   `git -C <repo> diff --numstat` 之类先手工对一遍数；真要跑端到端测试就请用户放开沙箱或在普通终端跑。
 - git 的 `core.autocrlf` 会刷 `LF will be replaced by CRLF` 警告，属正常；提交进仓库的仍是 LF。
 - **本机（2026-10）实际跑的是 desktop 版**：`DSH_PROFILE=desktop`，插件在
-  `C:\Users\<user>\.dsh\profiles\desktop\package.json` 里是 **npm 安装副本**（`@xia-sc/dsh-git: ^0.7.0`），
-  **不是 `link:`** —— 所以**改仓库不会自动生效**（本文档写作时两者内容恰好逐字节相同，见 `COMPAT.md` §6.1）。
-  `profiles/web` 里那条 `link:E:/dsh/plugin/dsh-git` 仍在，但那是另一套安装。
-  要让 desktop 版跑上新代码：`dsh plugin --profile desktop add E:/dsh/plugin/dsh-git`，然后**重启应用**。
+  `C:\Users\<user>\.dsh\profiles\desktop\package.json` 里现在是 **源码链接安装**
+  （`@xia-sc/dsh-git: link:E:/dsh/plugin/dsh-git`，`node_modules/@xia-sc/dsh-git` 是指向本仓库的符号链接）——
+  所以**改仓库后刷新页面即生效**（只有改了宿主半 `lib/index.js` 才需要重启应用）。
+  `profiles/web` 里那条 `link:` 是另一套安装。
+  换回 npm 渠道：`dsh plugin --profile desktop add @xia-sc/dsh-git@<版本>`，然后重启应用。
+  改成 link 安装的命令（会重写 profile 的 package.json/lockfile）：`dsh plugin --profile desktop add E:/dsh/plugin/dsh-git`。
 - **改包名要连 profile 一起改**：`cordis.patch.yml` 里的行名就是包名，Loader 从 profile 解析这个
   specifier。从 `@dsh-plugins/dsh-git` 改成 `@xia-sc/dsh-git` 之后，profile 里那条 `link:` 的键和
   `dsh.profile.bundles` 里的名字都得换成新名，否则下次 `dsh web` 启动解析不到模块，插件（含胶囊/面板）会消失。
