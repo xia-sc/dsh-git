@@ -87,6 +87,21 @@ const WORKTREE_DIFF = [
   "\\ No newline at end of file"
 ].join("\n");
 
+// The status fixture is mutable so tests can put the workbench into the states
+// the network button has to tell apart (a dirty tree vs only unpushed commits).
+// Any test that changes it restores the default afterwards.
+let statusValue = {
+  repo: true,
+  branch: "main",
+  detached: false,
+  oid: "abc1234",
+  upstream: "origin/main",
+  ahead: 1,
+  behind: 0,
+  dirty: 2,
+  changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }]
+};
+
 const ctx = {
   effect() { return () => {}; },
   locale: { register() { return () => {}; } },
@@ -96,7 +111,7 @@ const ctx = {
         calls.push(`${channel}/${endpoint}`);
         sent.push({ endpoint, payload });
         if (endpoint === "status") {
-          return { ok: true, value: { repo: true, branch: "main", detached: false, oid: "abc1234", upstream: "origin/main", ahead: 1, behind: 0, dirty: 2, changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }] } };
+          return { ok: true, value: statusValue };
         }
         if (endpoint === "branches") {
           return { ok: true, value: { repo: true, current: "main", local: [{ name: "main", current: true, sha: "abc1234", upstream: "origin/main" }, { name: "dev", current: false, sha: "def5678", upstream: null }], remote: [{ name: "origin/main", short: "main" }] } };
@@ -550,7 +565,7 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     'data-dsh-git="output"',
     "action.fetch",
     "action.pull",
-    "action.commitPush",
+    "action.push",
     "action.stage",
     "action.generate",
     "commit.placeholder",
@@ -567,17 +582,63 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   console.log("body order:", order.length, "blocks in workflow order");
 }
 
-// The network toolbar's third button is the one-click "commit & push": it stages
-// everything, commits the composer's message, then pushes. With an empty draft
-// it must render disabled (the plain Commit button below keeps its own rule).
+// The network toolbar's primary button has two modes, and the retry path is the
+// point: a failed commit-and-push leaves a clean tree and an empty composer, so
+// a commit-only button was dead while the pill still showed "↑1". With unpushed
+// commits it offers a plain push instead.
 {
+  const { networkPrimary } = mod.__internals;
+  if (typeof networkPrimary !== "function") throw new Error("client must expose networkPrimary for the render test");
+  const base = { dirty: 0, ahead: 0, upstream: "origin/main", oid: "abc1234", detached: false };
+
+  if (networkPrimary({ ...base, dirty: 2 }, "feat: x").action !== "commitPush") {
+    throw new Error("dirty tree + draft must commit and push");
+  }
+  // A failed push leaves exactly this: dirty leftovers or a clean tree, an empty
+  // composer, and commits the upstream does not have.
+  if (networkPrimary({ ...base, dirty: 2, ahead: 1 }, "").action !== "push") {
+    throw new Error("unpushed commits must stay pushable with an empty draft");
+  }
+  if (networkPrimary({ ...base, ahead: 1 }, "").action !== "push") {
+    throw new Error("a clean tree with unpushed commits must offer push");
+  }
+  const idle = networkPrimary(base, "");
+  if (idle.action !== null || idle.reason !== "changes.none") {
+    throw new Error(`nothing to do must disable the button: ${JSON.stringify(idle)}`);
+  }
+  const needMessage = networkPrimary({ ...base, dirty: 2 }, "");
+  if (needMessage.action !== null || needMessage.reason !== "commit.empty") {
+    throw new Error(`an empty draft must ask for a message: ${JSON.stringify(needMessage)}`);
+  }
+  if (networkPrimary({ ...base, upstream: null }, "").action !== "push") {
+    throw new Error("a branch with no upstream must offer its first push");
+  }
+  if (networkPrimary({ ...base, detached: true, ahead: 1 }, "").action !== null) {
+    throw new Error("a detached HEAD has no branch to push");
+  }
+
+  // In the panel (default fixture: dirty + ahead, empty draft) the toolbar shows
+  // a plain push and it is ENABLED — the regression this test exists for.
   const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
-  const at = html.indexOf("action.commitPush");
-  if (at < 0) throw new Error("the network toolbar must offer commit-and-push");
-  const start = html.lastIndexOf("<button", at);
-  const tag = html.slice(start, html.indexOf(">", at));
-  if (!tag.includes("disabled")) throw new Error("commit-and-push must be disabled while the commit message is empty");
-  console.log("commit-and-push: present in the toolbar, disabled on an empty draft");
+  if (html.includes("action.commitPush")) throw new Error("an empty draft must not claim it will commit");
+  const at = html.indexOf("action.push");
+  if (at < 0) throw new Error("the toolbar must offer push for unpushed commits");
+  const tag = html.slice(html.lastIndexOf("<button", at), html.indexOf(">", at));
+  if (tag.includes("disabled")) throw new Error("a failed push must not leave the button dead");
+
+  // Clean tree and nothing unpushed: back to a disabled commit-and-push.
+  statusValue = { ...statusValue, dirty: 0, ahead: 0, changes: [] };
+  await store.refresh("C:/repo");
+  const idleHtml = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  const idleAt = idleHtml.indexOf("action.commitPush");
+  if (idleAt < 0) throw new Error("the idle toolbar must still show the commit-and-push label");
+  const idleTag = idleHtml.slice(idleHtml.lastIndexOf("<button", idleAt), idleHtml.indexOf(">", idleAt));
+  if (!idleTag.includes("disabled")) throw new Error("a clean, fully pushed tree must disable the primary action");
+
+  // Restore the default fixture for the tests that follow.
+  statusValue = { ...statusValue, dirty: 2, ahead: 1, changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }] };
+  await store.refresh("C:/repo");
+  console.log("network primary: commit-and-push vs plain push (unpushed commits stay pushable after a failure)");
 }
 
 // The primary buttons must use the harness's contrast pairing. `brand-primary`

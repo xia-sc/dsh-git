@@ -112,11 +112,23 @@ the first selection expands the list to its full length.
 The commit area follows the real order of operations: **stage all → draft → commit**.
 
 The toolbar's **Commit & push** button is the one-click version of the same
-flow: stage everything, commit the composer's message, then push. It stays
-disabled without a message or with a clean tree; the **Commit** button below
-keeps its original meaning — **it commits what is staged and never stages
-implicitly**. When the push fails after the commit landed, the notice says so
-("Committed, but push failed").
+flow: stage everything, commit the composer's message, then push. The
+**Commit** button below keeps its original meaning — **it commits what is
+staged and never stages implicitly**. When the push fails after the commit
+landed, the notice says so ("Committed, but push failed").
+
+**When only the push is left, that button is a plain push**: a failed push
+(network drop, remote refusal) leaves the commit landed, the tree clean and the
+composer cleared — which used to disable the button for good, so the only way
+to retry was a terminal while the pill kept showing "↑1". The third network
+button now follows the state: **a dirty tree + a message** → Commit & push;
+otherwise, as long as local commits are still unpushed (`ahead > 0`, or a branch
+with no upstream yet that already has commits) → **Push**, which re-pushes the
+existing commits and stages/commits nothing; when neither holds the button is
+disabled and its tooltip says why (nothing to do / a message is required).
+Every action also re-reads the repository **after a failure**, so the
+"Committed, but push failed" card stays while the button can immediately retry
+against the real `ahead` count.
 
 **A branch with no upstream is pushed anyway**: a plain `git push` fails outright
 in that state (`fatal: The current branch … has no upstream branch`) — exactly

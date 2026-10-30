@@ -174,6 +174,9 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 - **同一个工作区的重读不许清空界面**：`doRefresh` 里 `keep = cwd === state.cwd && phase === "ready"` 时保持
   `phase` 不变、只置 `refreshing`，否则点 ↻ / 操作后的重读会把工作台收成一行 loading 再弹回来（"界面跳一下"）。
   注意 `refreshing` 必须由 `idleState()` 复位，别只靠 emit。
+- **动作失败后也要重读状态**：`act()` 成功与失败都走 `refresh()`（`applyData()` 保留 `lastResult`，失败卡片不丢）。
+  提交并推送失败时提交已经落地，不重读的话 store 里 `dirty`/`ahead` 还是提交前的旧值，界面会以为
+  "没什么可推"，于是按钮永远置灰——这就是用户遇到的"推送失败后无法再推"。
 - **配色只用主题真的定义过的 alias token**：Inspect Theme 报的 13 个是一个子集，完整名字在
   `dsh-client-ui-theme` 的生成 CSS 里（`grep '--dsw-alias-<name>:'`）。改配色前先核对一遍——用不存在的
   名字（如 `--dsw-alias-surface-tertiary`、`--dsw-alias-separator-primary`、`--dsw-alias-label-quaternary`）
@@ -197,12 +200,17 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 - **按钮组一律等宽分栏**（`S.grow` + `S.rowTight`）：网络工具条三个、提交卡片工具行三个。按钮基准高度 26px、
   圆角 7、`box-sizing: border-box`——加新按钮时沿用 `S.button`/`S.buttonPrimary`，别再手写一堆只差宽度
   的内联样式（那正是"排列杂乱"的来源）。
+- **网络工具条第三个按钮是两模式的**（`networkPrimary(state, draft)`，纯函数、已进 `__internals`）：
+  有改动 + 有提交信息 → `commitPush`（暂存全部 → 提交 → 推送）；否则只要还有未推送提交（`ahead > 0`，
+  或 `upstream === null` 而本地有提交，即新建分支还没推过）→ `push`（只重推已有提交，不暂存不提交）；
+  两者都不成立 → 禁用，`reason` 给本地化键（`changes.none` / `commit.empty`）。这条是"推送失败后
+  就再也推不出去"的修复：失败后提交已落地、树是干净的、输入框已清空，只写 commitPush 的按钮必然死掉。
 - **git 的 `message` 文本在 `rpc()` 边界剥 ANSI**（`stripAnsiEscapes`）：远端会给自己的 banner 上色
   （Gitee 甚至先发一个截断的 `ESC[0`），DOM 里没有字形可渲染，只剩 `[0[01;33m` 这种参数当正文显示。
   只剥 `value.message` / `error.message`，**diff body 与路径一律不动**（内容必须逐字节保真）。
 - `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`、
   `stripAnsiEscapes`、`outputView`、`settingsView`、`LANGUAGE_PRESETS`、`sectionView`、`changeTagStyle`、
-  `panelBoxStyle`、`DIFF_PANEL_HEIGHT`、`sessionModelRoute`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
+  `panelBoxStyle`、`DIFF_PANEL_HEIGHT`、`sessionModelRoute`、`networkPrimary`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
 - **提交信息语言是用户偏好，不是会话状态**：`generateLanguage`/`generateLanguageText` 由 store 持有并写进
   `localStorage`（键 `dsh-git.commitLanguage`，通过 `window.localStorage` 访问，Node 的实验性全局会刷警告），
   `idleState()` 每次重建状态时从闭包变量重新发布——在 `idleState()` 里写死 `auto` 会让任何一次 `status`
@@ -266,7 +274,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 
 ## 7. 发版流程
 
-1. 改 `package.json` 的版本号（当前 0.7.3）。
+1. 改 `package.json` 的版本号（当前 0.7.4）。
 2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit` + `npm run test:push`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
