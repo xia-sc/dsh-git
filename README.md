@@ -83,6 +83,13 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 它需要非空提交信息与非空工作区（任一不满足就置灰）；下方的「提交」按钮保持原语义——
 **只提交已暂存内容，不隐式暂存**。推送失败时提交已经落地，通知会明确写「已提交，但推送失败」。
 
+**分支还没有上游时，推送会自动建立跟踪**：`git push` 在分支没有 upstream 时会直接失败
+（`fatal: The current branch … has no upstream branch`），而这正是新建分支后第一次推送的状态。
+插件改为按 git 自己报错里的建议执行 `git push --set-upstream <remote> <branch>`：创建远端分支
+并记录 `branch.<name>.remote` / `.merge`（由 git 写入，插件不手改配置）。远端按
+`remote.pushDefault` → `origin` → 唯一 remote 的顺序选择；多个 remote 且都不是 `origin` 时
+报 `no-remote` 而不是猜一个（把分支推到错误仓库比一条可读的错误更糟）。
+
 - **暂存全部**：`git add --all`（含删除与未跟踪文件）。工作区干净时置灰。
   这是"只有未暂存改动、点提交却报错"的正解——提交本身依然**不会**隐式暂存。
 - **AI 生成依据**：三选一，决定把哪一部分改动交给模型：
@@ -197,7 +204,7 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | `stage` | `{ cwd }` | `{ message }`，经 `git add --all` |
 | `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, truncated}, index: {…} }`。两侧一次读回（`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`）；`path` 必须是仓库内相对路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白），非法时报 `invalid-path`。未跟踪路径用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1），未跟踪目录用 `git ls-files --others --exclude-standard` 展开（上限 50 个，其余计入 `skipped`）。单侧超过 40 万字符在行边界截断并置 `truncated`；二进制置 `binary`。**只读**，不碰 index / 工作区 / 配置。 |
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
-| `push` | `{ cwd }` | `{ message }`（120s 超时） |
+| `push` | `{ cwd }` | `{ message }`（120s 超时）。分支有上游时走普通 `git push`；**没有上游时自动 `git push --set-upstream <remote> <branch>`**（远端顺序 `remote.pushDefault` → `origin` → 唯一 remote），所以新建的分支可以一次推上去并开始跟踪。没有 remote、或多个 remote 且都没有 `origin` 时报 `no-remote`（附 `details.remotes`）；游离 HEAD 报 `detached-head`。 |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
 | `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。`language` 是可选的**语言名**（顶栏 ⚙ 里的设置；缺失、`null`、空串与 `auto` 都表示「跟随仓库」），它会被写进 system prompt 强制整条信息只用该语言；形状或长度不合法（> 60 字符、含换行/引号/冒号等）报 `invalid-language`。失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
 
@@ -220,6 +227,11 @@ dsh plugin --profile web remove @xia-sc/dsh-git
   12000 字符后发送，且不发送任何仓库外的内容。输出上限 8192 token：思考型
   模型的 reasoning 与正文共用同一份 completion 预算，上限太小会"一个字都没
   写就超限"，此时报 `llm-truncated` 而不是含糊的 `llm-empty`。
+- **push 在无上游时自动建立跟踪**：这是 git 自己在报错里给出的建议
+  （`git push --set-upstream <remote> <branch>`），不是为了绕开配置检查——
+  它创建远端分支，并由 git 记录 `branch.<name>.remote` / `.merge`。插件
+  「绝不修改 git config」的边界不变：`user.name/email` 这类设置仍然从不代写，
+  跟踪关系是 git 自己 push 的结果。
 - **push/pull 凭据**来自系统（Git Credential Manager / SSH agent）；插件
   绝不碰凭据存储。AI 生成同样不接触凭据——API key 由模型适配器自己解析。
 - **插件绝不修改 git config**；缺 author 时给出明确错误而不是悄悄补写。
@@ -270,7 +282,12 @@ dsh plugin --profile web remove @xia-sc/dsh-git
   - `npm run test:diff` —— **端到端**：临时仓库里逐个验证 `diff` 端点：工作区
     / 已暂存两侧、未跟踪文件与**未跟踪目录**、**重命名配对**、删除、二进制、
     40 万字符截断、以及路径校验与非仓库目录。
-  - 后两个都必须 spawn git 的管道 stdio，故**不在 `npm test` 内**——请在没有
+  - `npm run test:push` —— **端到端**（完全离线：本地 bare 仓库当 `origin`）：
+    新建分支首次推送会 `--set-upstream` 创建远端分支并记录上游、已跟踪分支走
+    普通 `git push`、游离 HEAD / 无 remote / 多 remote 无 `origin` 各自的诊断码，
+    以及 `remote.pushDefault` 的选择顺序。纯决策部分由 `test/smoke.mjs` 里的
+    `pushPlan` 断言覆盖，不 spawn git。
+  - 这些都必须 spawn git 的管道 stdio，故**不在 `npm test` 内**——请在没有
     该限制的环境（普通终端）单独运行。
   git 命令集对照运行中的服务端做端到端验证。
 

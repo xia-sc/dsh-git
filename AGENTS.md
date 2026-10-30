@@ -28,6 +28,7 @@
 | `test/render.mjs` | 双界面真实 React SSR：两个座位、提交区控件、diff 解析器与行渲染、`act()` 回传 | 需要 `react`/`react-dom`，见 §5 |
 | `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、重命名配对、删除、二进制、截断、校验） | 需要 spawn git，不在 `npm test` 内 |
 | `test/commit.mjs` | **端到端**：真临时仓库走 `commit` 端点，用 `git log --format=%B` 逐字节比对 | 同上 |
+| `test/push.mjs` | **端到端**：真临时仓库 + 本地 bare 仓库当 `origin`（完全离线）走 `push` 端点：无上游分支首次推送必须 `--set-upstream` 建远端分支并记录跟踪、已跟踪分支走普通 `git push`、游离 HEAD/无 remote/多 remote 无 origin 的诊断码、`remote.pushDefault` 顺序 | 同上；纯决策（`pushPlan`）由 `test/smoke.mjs` 守护，不 spawn git |
 | `test/ui/*.mjs` | 浏览器脚本（playwright-core + 本机 Chrome）：`verify-diff.mjs` 打真实 GUI 回归差异面板；`verify-settings.mjs` 自己起本地 http 服务、离线喂真实 React UMD + 真 `localStorage` 驱动设置弹层与语言（无需认证），并落 `test/ui/settings-popover.png` | `verify-diff.mjs` 需要认证 URL，见 §8；`verify-settings.mjs` 不需要 |
 | `COMPAT.md` | 宿主版本兼容性笔记：每条按「症状 → 证据 → 根因 → 修法 → 守护测试」记，外加换版后的排查顺序 | 换版/静默失效时先读它；版本故事只写这里 |
 | `.github/workflows/publish.yml` | 唯一一条 CI：推 `vX.Y.Z` tag → 校验 tag 与 `package.json` 一致 → `npm test` → `npm publish --provenance`（OIDC trusted publishing；没登记时用 `NPM_TOKEN` secret） | 不装依赖、不打包（§3.1）；认证的一次性配置见 §7 |
@@ -39,6 +40,7 @@ npm test                  # smoke → host-mount → slot-mount → generate →
 node test/smoke.mjs       # 单独跑；改任何文件后最快的门禁
 npm run test:diff         # 端到端 diff（必须能 spawn git，见 §8）
 npm run test:commit       # 端到端 commit
+npm run test:push         # 端到端 push（本地 bare 仓库当 origin，完全离线）
 $env:DSH_GIT_REACT_ROOT = "<含 react 与 react-dom 的 node_modules>"   # render 测试前置
 node test/render.mjs
 node test/ui/verify-diff.mjs            # 默认整条 /dsh-git-rpc 夹具化，验证客户端半边（自关首启弹层）
@@ -122,6 +124,11 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   不改「提交」本身的语义；推送失败时提交已落地，用 `output.commitPushCommittedNotPushed` 明确提示。
   新增 store 动作时 zh/en 的 `action.*` / `busy.*` / `output.*` 三个键都要补齐（`test/render.mjs` 按渲染文本查按钮）。
 - **`pull` 恒 `--ff-only`**：不产生意外合并提交。
+- **无上游的分支 push 会自动 `--set-upstream`**：这是 git 报错里自己给的建议，不是绕过配置检查。
+  决策由纯函数 `pushPlan` 承担（`test/smoke.mjs` 守护）：有上游 → 普通 `git push`；无上游 →
+  `git push --set-upstream <remote> <branch>`（remote 顺序 `remote.pushDefault` → `origin` → 唯一 remote）；
+  无 remote / 多 remote 无 `origin` → `no-remote`（不猜，避免推错仓库）；游离 HEAD → `detached-head`。
+  跟踪关系由 git 写入，插件仍不手写 git config。
 - **绝不修改 git config**；缺 `user.name/email` 时报 `missing-author`，不要替用户补写。
 - **绝不碰凭据**：push/pull 用系统凭据管理器 / SSH agent。
 - 面板操作是普通 UI 行为，不写会话日志、不进模型提示词；AI 起草只填输入框，不自动提交。
@@ -226,8 +233,9 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   `test/host-slots.mjs` 提供（安装树 → `DSH_GIT_SLOTS_ROOT` → 按版本缓存 → npm 同版本真包）。
   **不允许**用 stub 假实现顶替；取不到时打印三条可操作修法并 FAIL + 退 1。新增反证：
   空 `DSH_GIT_SLOTS_ROOT` / 断网 registry / `DSH_ASAR=<非 asar>` 都必须是 exit 1（见 `COMPAT.md` §7.1）。
-- **必须 spawn git 的**（`test/diff.mjs` / `test/commit.mjs`）单独成文件并加 `npm run test:xxx`，
-  不要塞进 `npm test`——沙箱里子进程管道 stdio 会 EPERM（见 §8）。
+- **必须 spawn git 的**（`test/diff.mjs` / `test/commit.mjs` / `test/push.mjs`）单独成文件并加 `npm run test:xxx`，
+  不要塞进 `npm test`——沙箱里子进程管道 stdio 会 EPERM（见 §8）。push 的纯决策走 `pushPlan`，其断言在
+  `test/smoke.mjs` 里，所以改远端选择逻辑时即使端到端跑不了也有门禁。
 - `test/render.mjs` 需要一份真实 `react`/`react-dom`，解析顺序：`DSH_GIT_REACT_ROOT` → `$DSH_HOME/profiles/web/node_modules`
   → `$DSH_HOME/profiles/node_modules` → 一个 npx 缓存路径 → 常规 node 解析；全都没有时**打印 SKIP 并退 0**（不要改成失败）。
 - UI 脚本用 `playwright-core` + 本机 Chrome（`node_modules` 是 gitignore 的，`npm install --no-save playwright-core`
@@ -248,7 +256,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 ## 6. 本地验证清单
 
 1. `npm test`（或至少 `node test/smoke.mjs`）。
-2. 改了宿主半 → `npm run test:diff` / `test:commit`；再请用户重启 `dsh web` 后在真实 GUI 里点一遍。
+2. 改了宿主半 → `npm run test:diff` / `test:commit` / `test:push`；再请用户重启 `dsh web` 后在真实 GUI 里点一遍。
 3. 改了浏览器半 → 刷新页面，用 playwright（MCP 浏览器或 `test/ui/*.mjs`）真点一遍：开面板 → 点变更行 → 看
    `[data-dsh-git="diff"]` 是否出现、行数/`+N −M` 是否与 `git diff --numstat` 一致 → 再点收起 → 拖右边缘 → 双击复位。
    设置相关的改动直接 `npm run test:ui:settings`（离线真点）；在真实 GUI 里再顺手走一遍：开面板 → 点 ⚙ →
@@ -259,7 +267,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 ## 7. 发版流程
 
 1. 改 `package.json` 的版本号（当前 0.7.3）。
-2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit`。
+2. 跑全部门禁：`npm test` + `npm run test:diff` + `npm run test:commit` + `npm run test:push`。
 3. 提交：中文一行主题 + 分节正文，沿用既有前缀（`feat:` / `fix:` / `docs:` / `chore:`）。正文按
    「宿主半 / 浏览器半 / 测试 / 界面文案」分节写清改了什么与为什么。
 4. `git push origin master`。
@@ -317,8 +325,8 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 ## 8. 这个环境（Windows / DSH 会话沙箱）的坑
 
 - **子进程管道 stdio 会被拦**：Node 里 `execFile`/`spawn` 默认 `stdio: "pipe"` 在受限沙箱里报 `spawn EPERM`，
-  于是两个端到端测试跑不了。**用 pwsh 直接调 git 是可以的**（管道由 PowerShell 建立），所以临时验证可以
-  `git -C <repo> diff --numstat` 之类先手工对一遍数；真要跑端到端测试就请用户放开沙箱或在普通终端跑。
+  于是端到端测试（diff / commit / push）跑不了。**用 pwsh 直接调 git 是可以的**（管道由 PowerShell 建立），
+  所以临时验证可以 `git -C <repo> diff --numstat` 之类先手工对一遍数；真要跑端到端测试就请用户放开沙箱或在普通终端跑。
 - git 的 `core.autocrlf` 会刷 `LF will be replaced by CRLF` 警告，属正常；提交进仓库的仍是 LF。
 - **本机（2026-10）实际跑的是 desktop 版**：`DSH_PROFILE=desktop`，插件在
   `C:\Users\<user>\.dsh\profiles\desktop\package.json` 里现在是 **源码链接安装**
@@ -368,9 +376,8 @@ in `test/host-root.mjs` — no host install skips, an installed-but-unresolvable
 inlines it into the shell bundle, so the installed tree no longer ships it): installed tree first, then
 `DSH_GIT_SLOTS_ROOT`, then a per-version cache, then npm with SRI verification — and a machine that has a
 host but cannot run the guard fails loudly instead of skipping;
-`npm run test:diff`
-and `npm run test:commit` are real-git end-to-end tests that need to spawn git (blocked in a confined
-sandbox) and are therefore kept out of `npm test`. The one CI workflow (`.github/workflows/publish.yml`)
+`npm run test:diff`, `npm run test:commit` and `npm run test:push` are real-git end-to-end tests that
+need to spawn git (blocked in a confined sandbox) and are therefore kept out of `npm test`. The one CI workflow (`.github/workflows/publish.yml`)
 does nothing but publish: a `vX.Y.Z` tag runs the gate and `npm publish --provenance` (OIDC trusted
 publishing, or an `NPM_TOKEN` secret). Releases are a `package.json` bump, a `feat:`/`fix:` commit, an
 annotated `vX.Y.Z` tag (which is what publishes to npm) and a `gh release create` with detailed Chinese

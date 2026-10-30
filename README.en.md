@@ -118,6 +118,16 @@ keeps its original meaning — **it commits what is staged and never stages
 implicitly**. When the push fails after the commit landed, the notice says so
 ("Committed, but push failed").
 
+**A branch with no upstream is pushed anyway**: a plain `git push` fails outright
+in that state (`fatal: The current branch … has no upstream branch`) — exactly
+where a just-created branch starts. The plugin instead does what git's own error
+message recommends: `git push --set-upstream <remote> <branch>`, which creates
+the remote branch and records `branch.<name>.remote` / `.merge` (git writes the
+config; the plugin never edits it). The remote is chosen in `git push`'s order —
+`remote.pushDefault` → `origin` → the only configured remote — and several
+remotes with none named `origin` is refused as `no-remote` instead of guessing,
+because pushing a branch into the wrong project is worse than an actionable error.
+
 - **Stage all**: `git add --all` (deletions and untracked files included).
   Disabled while the tree is clean. This is the answer to "only unstaged
   changes exist, so Commit fails" — committing itself still never stages
@@ -260,7 +270,7 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 | `stage` | `{ cwd }` | `{ message }` via `git add --all` |
 | `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, truncated}, index: {…} }`. Both sides are read in one round trip (`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`); `path` must be repository-relative (absolute paths, `..`, a leading `-`, control characters, and surrounding whitespace are rejected with `invalid-path`). An untracked path is diffed with `git diff --no-index -- /dev/null <path>` (exit code 1 tolerated); an untracked directory is expanded with `git ls-files --others --exclude-standard` (capped at 50, the rest counted in `skipped`). A side past 400k characters is truncated at a line boundary and flagged `truncated`; a binary side is flagged `binary`. **Read-only**: it never writes the index, the working tree, or any config. |
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
-| `push` | `{ cwd }` | `{ message }` (120s timeout) |
+| `push` | `{ cwd }` | `{ message }` (120s timeout). A branch with an upstream takes the plain `git push` path; a branch **without** one is pushed with `git push --set-upstream <remote> <branch>` (remote chosen as `remote.pushDefault` → `origin` → the only remote), so a just-created branch can be pushed once and starts tracking. No remote at all, or several remotes with none named `origin`, reports `no-remote` (with `details.remotes`); a detached HEAD reports `detached-head`. |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
 | `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. `sessionId` is an optional non-empty string (over 200 chars is `invalid-session`); the panel sends the current session id so session-affine gateways can route the call. `language` is an optional **language name** (the ⚙ setting; absent, `null`, an empty string and `auto` all mean "follow the repository") written into the system prompt to force the whole message into that language; a name that is too long (> 60 chars) or carries a line feed, quote or colon is `invalid-language`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
 
@@ -290,6 +300,12 @@ shell metacharacters, and leading dashes are all recorded verbatim.
   between its thinking and the message, so a cap sized for the message alone
   produces "hit the cap before writing anything" — reported as `llm-truncated`
   rather than a vague `llm-empty`.
+- **push sets up a missing upstream**: this is git's own recommendation in the
+  failure message (`git push --set-upstream <remote> <branch>`), not a way around
+  a config check — it creates the remote branch and git records
+  `branch.<name>.remote` / `.merge`. The "the plugin never mutates git config"
+  boundary is unchanged: `user.name/email` & co. are still never written; the
+  tracking relationship is simply what git's push produced.
 - **push/pull credentials** come from the system (Git Credential Manager /
   SSH agent); the plugin never touches credential storage. AI drafting never
   touches credentials either — the model adapter resolves its own API key.
@@ -358,7 +374,13 @@ shell metacharacters, and leading dashes are all recorded verbatim.
   index, an untracked file and an untracked **directory**, **rename pairing**, a
   deletion, a binary blob, the 400k truncation, path validation, and a directory
   outside any work tree.
-- The last two need piped child-process stdio, so they are deliberately **not**
+- `npm run test:push` — **end-to-end** (fully offline: a local bare repository
+  stands in for `origin`): the first push of a branch with no upstream creates
+  the remote branch and records the upstream, a tracked branch takes the plain
+  `git push` path, detached HEAD / no remote / several remotes without `origin`
+  each report their diagnostic code, and `remote.pushDefault` wins when set. The
+  pure decision itself is asserted by `pushPlan` in `test/smoke.mjs` (no git).
+- The last three need piped child-process stdio, so they are deliberately **not**
   part of `npm test` — run them from an ordinary terminal.
 - The git command set is verified end-to-end against the running server.
 

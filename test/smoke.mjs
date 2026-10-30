@@ -7,7 +7,7 @@
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apply, inject } from "../lib/index.js";
+import { apply, inject, pushPlan } from "../lib/index.js";
 
 // `cwd` is validated with `path.isAbsolute`, so a "C:/…" literal is only
 // absolute on Windows: on a Linux runner the plugin answers invalid-cwd and
@@ -341,6 +341,58 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-message") {
       throw new Error(`evil message not rejected: ${JSON.stringify(msg)} -> ${JSON.stringify(res)}`);
     }
+  }
+}
+
+// push decides its git arguments without spawning git. The interesting case is
+// the one that used to fail in the panel: a branch with no upstream (every
+// freshly created branch) must be pushed with --set-upstream, otherwise git
+// answers "fatal: The current branch … has no upstream branch". The remote is
+// chosen in `git push`'s own order and an ambiguous setup is refused rather
+// than guessed.
+{
+  const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+  const first = pushPlan({ branch: "antdv-next-migration", hasUpstream: false, remotes: ["origin"], pushDefault: null });
+  if (!same(first.args, ["push", "--set-upstream", "origin", "antdv-next-migration"])) {
+    throw new Error(`an untracked branch must set its upstream: ${JSON.stringify(first)}`);
+  }
+  const tracked = pushPlan({ branch: "main", hasUpstream: true, remotes: ["origin"], pushDefault: null });
+  if (!same(tracked.args, ["push"])) {
+    throw new Error(`a tracked branch must keep plain git push: ${JSON.stringify(tracked)}`);
+  }
+  // Branch names come from git and may be Unicode (a Chinese branch name is
+  // ordinary); the plan must pass the name through untouched.
+  const unicodeBranch = pushPlan({ branch: "功能/迁移", hasUpstream: false, remotes: ["origin"], pushDefault: null });
+  if (!same(unicodeBranch.args, ["push", "--set-upstream", "origin", "功能/迁移"])) {
+    throw new Error(`a Unicode branch name must pass through: ${JSON.stringify(unicodeBranch)}`);
+  }
+  // remote.pushDefault, then origin, then the only configured remote.
+  const viaDefault = pushPlan({ branch: "b1", hasUpstream: false, remotes: ["a", "b"], pushDefault: "b" });
+  if (!same(viaDefault.args, ["push", "--set-upstream", "b", "b1"])) {
+    throw new Error(`remote.pushDefault must win: ${JSON.stringify(viaDefault)}`);
+  }
+  // A configured default that no longer exists (or is not a plain remote name)
+  // falls through to origin instead of producing an unusable argument.
+  for (const pushDefault of ["gone", "--upload-pack=evil", "", null, undefined]) {
+    const res = pushPlan({ branch: "b1", hasUpstream: false, remotes: ["origin"], pushDefault });
+    if (!same(res.args, ["push", "--set-upstream", "origin", "b1"])) {
+      throw new Error(`unusable pushDefault ${JSON.stringify(pushDefault)} must fall through: ${JSON.stringify(res)}`);
+    }
+  }
+  const onlyRemote = pushPlan({ branch: "b1", hasUpstream: false, remotes: ["gitee"], pushDefault: null });
+  if (!same(onlyRemote.args, ["push", "--set-upstream", "gitee", "b1"])) {
+    throw new Error(`the only remote must be used: ${JSON.stringify(onlyRemote)}`);
+  }
+  // Refusals carry their own diagnostic code; no guessing into a wrong project.
+  const ambiguous = pushPlan({ branch: "b1", hasUpstream: false, remotes: ["a", "b"], pushDefault: null });
+  if (ambiguous.code !== "no-remote" || !same(ambiguous.details?.remotes, ["a", "b"])) {
+    throw new Error(`several remotes without origin must be refused: ${JSON.stringify(ambiguous)}`);
+  }
+  const noRemote = pushPlan({ branch: "b1", hasUpstream: false, remotes: [], pushDefault: null });
+  if (noRemote.code !== "no-remote") throw new Error(`no remote must be refused: ${JSON.stringify(noRemote)}`);
+  for (const branch of [null, undefined, ""]) {
+    const res = pushPlan({ branch, hasUpstream: false, remotes: ["origin"], pushDefault: null });
+    if (res.code !== "detached-head") throw new Error(`detached HEAD must be refused: ${JSON.stringify(res)}`);
   }
 }
 

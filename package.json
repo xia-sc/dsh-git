@@ -42,6 +42,7 @@
     "test": "node test/smoke.mjs && node test/host-mount.mjs && node test/slot-mount.mjs && node test/generate.mjs && node test/render.mjs",
     "test:commit": "node test/commit.mjs",
     "test:diff": "node test/diff.mjs",
+    "test:push": "node test/push.mjs",
     "test:ui:settings": "node test/ui/verify-settings.mjs",
     "prepublishOnly": "npm test"
   },
