@@ -260,6 +260,25 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   console.log("panel expanded render bytes:", html.length);
 }
 
+// Drafting capability: a host without the optional `llm` service reports
+// generate:false, so the panel disables the draft button with a visible reason
+// instead of letting the click reach an endpoint that would answer
+// `llm-unavailable`.
+{
+  statusValue.generate = false;
+  await store.refresh("C:/repo");
+  store.setPanelOpen(true);
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  if (!html.includes('data-dsh-git="generate-unavailable"')) throw new Error("a host without llm must explain why drafting is disabled");
+  if (!/data-dsh-git="generate"[^>]*disabled/.test(html)) throw new Error("the draft button must be disabled without llm");
+  if (!html.includes('title="generate.unavailable"')) throw new Error("the disabled draft button must carry the reason");
+  statusValue.generate = true;
+  await store.refresh("C:/repo");
+  const restored = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  if (restored.includes('data-dsh-git="generate-unavailable"')) throw new Error("the hint must disappear once llm is available");
+  console.log("draft capability: disabled + explained without llm, restored with it");
+}
+
 // Dock: loaded repo state → the branch summary pill.
 {
   const html = renderToStaticMarkup(React.createElement(bySlot["conversation.input.dock"].comp, commonProps));
@@ -662,8 +681,9 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
 // The diff parser: line numbers per side, kind classification, and the one case
 // a naive file-header check gets wrong (a removed line whose text starts `--`).
 {
-  const { parseUnifiedDiff, parseDiffSide, diffRowView, DIFF_ROW } = mod.__internals;
+  const { parseUnifiedDiff, parseDiffSide, diffRowView, diffWindow, DIFF_ROW } = mod.__internals;
   if (!parseUnifiedDiff || !parseDiffSide || !diffRowView) throw new Error("client must expose the diff internals for the render test");
+  if (typeof diffWindow !== "function") throw new Error("client must expose diffWindow for the render test");
 
   const parsed = parseUnifiedDiff(WORKTREE_DIFF);
   const kinds = parsed.rows.map((row) => row.kind);
@@ -707,6 +727,31 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (parseDiffSide({ diff: "", binary: false, truncated: false }).empty !== true) throw new Error("an empty diff must read as empty");
   if (parseDiffSide({ diff: "Binary files a and b differ", binary: true, truncated: false }).binary !== true) throw new Error("binary flag lost");
   if (parseDiffSide({ diff: "x", binary: false, truncated: true }).truncated !== true) throw new Error("truncated flag lost");
+  // Per-file binary evidence: the names survive, unusable entries are dropped,
+  // and a side with no such evidence keeps an empty list.
+  if (parseDiffSide({ diff: "x", binary: false, truncated: false }).binaryPaths.length !== 0) throw new Error("binaryPaths must default to empty");
+  const mixed = parseDiffSide({ diff: "text", binary: false, binaryPaths: ["a/pixel.bin", 42, ""], truncated: false });
+  if (mixed.binaryPaths.length !== 1 || mixed.binaryPaths[0] !== "a/pixel.bin") throw new Error(`binaryPaths must keep only usable names: ${JSON.stringify(mixed.binaryPaths)}`);
+  if (mixed.binary !== false) throw new Error("a mixed side is not a binary side");
+  // Windowing math: a fixed-height row slice plus spacers that keep the
+  // scrollbar honest. This is what replaces rendering every line at once.
+  {
+    const all = diffWindow(10, 0, 480, 18, 8);
+    if (all.start !== 0 || all.end !== 10 || all.top !== 0 || all.bottom !== 0) throw new Error(`a small side must window to everything: ${JSON.stringify(all)}`);
+    const top = diffWindow(100000, 0, 360, 18, 8);
+    if (top.start !== 0 || top.end !== 28 || top.bottom !== (100000 - 28) * 18) throw new Error(`top window wrong: ${JSON.stringify(top)}`);
+    const mid = diffWindow(100000, 18000, 360, 18, 8);
+    if (mid.start !== 992 || mid.end !== 1028) throw new Error(`middle window wrong: ${JSON.stringify(mid)}`);
+    if (mid.top !== 992 * 18 || mid.bottom !== (100000 - 1028) * 18) throw new Error(`spacers wrong: ${JSON.stringify(mid)}`);
+    const bottom = diffWindow(100000, 100000 * 18, 360, 18, 8);
+    if (bottom.end !== 100000) throw new Error(`the bottom window must clamp: ${JSON.stringify(bottom)}`);
+    const empty = diffWindow(0, 0, 480, 18, 8);
+    if (empty.start !== 0 || empty.end !== 0) throw new Error("an empty side has no rows to window");
+    const unmeasured = diffWindow(100000, 0, 0, 18, 8);
+    if (unmeasured.end !== 35) throw new Error(`an unmeasured viewport must use the fallback height: ${JSON.stringify(unmeasured)}`);
+    const negative = diffWindow(10, -100, 0, 0, -3);
+    if (negative.start !== 0 || negative.end !== 10) throw new Error(`garbage inputs must not break the window: ${JSON.stringify(negative)}`);
+  }
   console.log("diff parser rows:", parsed.rows.length, "add/del:", parsed.additions, "/", parsed.deletions);
 }
 

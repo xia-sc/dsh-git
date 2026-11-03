@@ -96,10 +96,13 @@ the first selection expands the list to its full length.
   `+`/`-` rows in the theme's success/error colours, hunk headers on their own
   row, `\ No newline at end of file` dimmed.
 - **Every edge has its own notice**: nothing on this side / a binary file has no
-  text diff / the diff was too large and only its beginning is shown / N more
-  untracked files were not expanded / the read failed. A diff past 1500 rows
-  renders its first 1500 with a button to expand the rest (so a huge patch never
-  becomes tens of thousands of nodes).
+  text diff (blobs mixed into an untracked directory are named in the notice and
+  the text hunks beside them still render) / the diff was too large and only its
+  beginning is shown / N more untracked files were not expanded / the read
+  failed. A huge patch no longer becomes tens of thousands of DOM nodes: an
+  unwrapped diff is **windowed** (only the visible rows plus a small overscan are
+  rendered, at the fixed 18px row height), and the wrapped view (variable row
+  height) pages in `DIFF_RENDER_MAX` rows at a time.
 - **Untracked files** are diffed against the empty blob and read as a
   `new file mode` addition; an untracked **directory** is expanded file by file
   (capped at 50, the rest counted in that notice).
@@ -183,7 +186,7 @@ One dual-face npm package:
 
 | Half | File | Role |
 | --- | --- | --- |
-| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `stage`, `diff`, `commit`, `push`, `log`, `generateMessage`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. AI drafting goes through the injected `llm` service. |
+| Host | `lib/index.js` | Cordis plugin (bundle row `dsh-git`) registering the `/dsh-git-rpc` prefix route on its own `ctx.webServer`, speaking the same Connection RPC envelope the browser's `connection.rpc.call` sends and reusing the connection service's Host/Origin + browser-session fence (`connection.requestRejection`). Endpoints: `status`, `branches`, `checkout`, `createBranch`, `fetch`, `pull`, `stage`, `diff`, `commit`, `push`, `log`, `generateMessage`. All git runs via `execFile` (no shell), timeouts (30s local / 120s network), strict input validation. AI drafting is optional: `llm` is **not** in `inject` (a hard dependency held the whole row pending when the host never started `dsh-llm`, leaving the route unregistered and the panel at a 405), so it is read per call through `ctx.get("llm")`; without it `status.generate` is `false` and `generateMessage` answers `llm-unavailable`. |
 | Browser | `lib/client.js` | `dsh.client` bundle (served at `/plugins/@xia-sc/dsh-git/client.js`): floating panel + dock line + shared store, hand-written against the module table (only `react`). |
 
 ### Why the route is self-owned (dsh >= 0.1.5-rc.1)
@@ -261,7 +264,7 @@ same Connection envelope as `/api`:
 
 Payloads use the `{ args }` convention. `cwd` must be an absolute path;
 `branch` matches `^[A-Za-z0-9][A-Za-z0-9._/-]*$` (no leading `-`, no `..`,
-`@{`, `\`, whitespace, control chars); `remote` is a plain segment. The commit
+`@{`, `\`, whitespace, control chars). The commit
 message is a real message: one subject line plus an optional multi-line body.
 CRLF becomes LF, trailing whitespace is stripped per line, leading/trailing
 blank lines are dropped and runs of blank lines collapse to one (so the single
@@ -273,18 +276,18 @@ shell metacharacters, and leading dashes are all recorded verbatim.
 
 | Endpoint | args | Result (`value`) |
 | --- | --- | --- |
-| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path, index, worktree, file, origFile}] }`. `path` is the display string (a rename reads `old → new`), `file`/`origFile` are the pathspec `diff` needs, and `index`/`worktree` are the two porcelain-v2 letters. |
+| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, generate, changes: [{status, path, index, worktree, file, origFile}] }`. `path` is the display string (a rename reads `old → new`), `file`/`origFile` are the pathspec `diff` needs, `index`/`worktree` are the two porcelain-v2 letters, and `generate` says whether the host provides the optional `llm` service (the panel disables the AI-draft button without it). |
 | `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
 | `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }` via `git switch --guess`; the browser pre-checks dirty state and warns before switching; a refusal caused by "local changes would be overwritten" is surfaced with a readable prefix. |
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }` via `git switch --create <branch> <base>` (omitted base = HEAD); creates the branch from the base branch and switches to it. |
-| `fetch` | `{ cwd, remote? }` | `{ message }` (120s timeout) |
+| `fetch` | `{ cwd }` | `{ message }` (120s timeout; `git fetch` takes no remote argument here — the panel has no remote picker, and a multi-remote repository follows git's own `branch.<name>.remote` behaviour) |
 | `pull` | `{ cwd }` | `{ message }` via `git pull --ff-only` (never implicit-merge) |
 | `stage` | `{ cwd }` | `{ message }` via `git add --all` |
-| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, truncated}, index: {…} }`. Both sides are read in one round trip (`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`); `path` must be repository-relative (absolute paths, `..`, a leading `-`, control characters, and surrounding whitespace are rejected with `invalid-path`). An untracked path is diffed with `git diff --no-index -- /dev/null <path>` (exit code 1 tolerated); an untracked directory is expanded with `git ls-files --others --exclude-standard` (capped at 50, the rest counted in `skipped`). A side past 400k characters is truncated at a line boundary and flagged `truncated`; a binary side is flagged `binary`. **Read-only**: it never writes the index, the working tree, or any config. |
+| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, binaryPaths, truncated}, index: {…} }`. Both sides are read in one round trip (`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`); `path` must be repository-relative (absolute paths, `..`, a leading `-`, control characters, and surrounding whitespace are rejected with `invalid-path`). An untracked path is diffed with `git diff --no-index -- /dev/null <path>` (exit code 1 tolerated); an untracked directory is expanded with `git ls-files --others --exclude-standard` (capped at 50, the rest counted in `skipped`). A side past 400k characters is truncated at a line boundary and flagged `truncated`. **Binary evidence is per file, before any truncation**: a side with nothing but blobs is `binary: true`; a side that mixes text and blobs is `binary: false` with the hidden names in `binaryPaths`, and its text hunks are sent as usual. **Read-only**: it never writes the index, the working tree, or any config. |
 | `commit` | `{ cwd, message }` | `{ message }`; `missing-author` error when `user.name/email` unset |
 | `push` | `{ cwd }` | `{ message }` (120s timeout). A branch with an upstream takes the plain `git push` path; a branch **without** one is pushed with `git push --set-upstream <remote> <branch>` (remote chosen as `remote.pushDefault` → `origin` → the only remote), so a just-created branch can be pushed once and starts tracking. No remote at all, or several remotes with none named `origin`, reports `no-remote` (with `details.remotes`); a detached HEAD reports `detached-head`. |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
-| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. `sessionId` is an optional non-empty string (over 200 chars is `invalid-session`); the panel sends the current session id so session-affine gateways can route the call. `language` is an optional **language name** (the ⚙ setting; absent, `null`, an empty string and `auto` all mean "follow the repository") written into the system prompt to force the whole message into that language; a name that is too long (> 60 chars) or carries a line feed, quote or colon is `invalid-language`. Failure code in `error.details.code`: `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`. `mode` is `staged` (default) / `unstaged` / `all`; anything else is `invalid-mode`. `sessionId` is an optional non-empty string (over 200 chars is `invalid-session`); the panel sends the current session id so session-affine gateways can route the call. `language` is an optional **language name** (the ⚙ setting; absent, `null`, an empty string and `auto` all mean "follow the repository") written into the system prompt to force the whole message into that language; a name that is too long (> 60 chars) or carries a line feed, quote or colon is `invalid-language`. Failure code in `error.details.code`: `llm-unavailable` (the host provides no `llm` service; the plugin still mounts and only disables drafting), `no-changes`, `no-provider`, `no-model`, `llm-truncated` (the output cap ran out before any text was written), `llm-empty`, `cancelled`, `llm-failed`. |
 
 > A failed result carries `error.code === "internal"` on the wire (the Connection
 > envelope only requires a string), with the plugin's own diagnostic in

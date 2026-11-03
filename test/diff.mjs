@@ -41,10 +41,14 @@ function git(cwd, args) {
 
 // ── mount the plugin's route, capturing the handler ──────────────────────────
 let route = null;
+const llm = { listProviders: () => [], listModels: async () => [], stream: async function* () {} };
 const ctx = {
   effect(fn) { return fn(); },
-  get(name) { return name === "connection" ? { requestRejection: () => undefined } : undefined; },
-  llm: { listProviders: () => [], listModels: async () => [], stream: async function* () {} },
+  get(name) {
+    if (name === "llm") return llm;
+    return name === "connection" ? { requestRejection: () => undefined } : undefined;
+  },
+  llm,
   webServer: { register(candidate) { route = candidate; return () => { route = null; }; } }
 };
 apply(ctx);
@@ -142,6 +146,30 @@ try {
     check("untracked dir: nothing skipped", value.skipped === 0, String(value.skipped));
   }
 
+  // ── an untracked directory mixing text and a blob: the text stays visible ──
+  // One blob used to flip the WHOLE side to "binary" (a single isBinaryDiff over
+  // the concatenated text), which hid every text hunk of that directory.
+  {
+    await mkdir(join(repo, "mixed"), { recursive: true });
+    await writeFile(join(repo, "mixed", "note.txt"), "visible\n", "utf8");
+    await writeFile(join(repo, "mixed", "pixel.bin"), Buffer.from([0x00, 0x01, 0x02, 0x00]));
+    const value = await diffOf("mixed/");
+    check("mixed dir: text hunk of the neighbour is kept", value.worktree.diff.includes("b/mixed/note.txt") && value.worktree.diff.includes("+visible"), value.worktree.diff);
+    check("mixed dir: the blob is not turned into a text diff", !/Binary files/.test(value.worktree.diff), value.worktree.diff);
+    check("mixed dir: the side is not flagged binary", value.worktree.binary === false, JSON.stringify(value.worktree));
+    check("mixed dir: the hidden blob is named", JSON.stringify(value.worktree.binaryPaths) === JSON.stringify(["mixed/pixel.bin"]), JSON.stringify(value.worktree.binaryPaths));
+  }
+
+  // ── an untracked directory that is nothing but blobs ──────────────────────
+  {
+    await mkdir(join(repo, "blobs"), { recursive: true });
+    await writeFile(join(repo, "blobs", "only.bin"), Buffer.from([0x00, 0x01, 0x02]));
+    const value = await diffOf("blobs/");
+    check("all-binary dir: side flagged binary", value.worktree.binary === true, JSON.stringify(value.worktree));
+    check("all-binary dir: no text leaked into the diff", value.worktree.diff.trim() === "", value.worktree.diff);
+    check("all-binary dir: the blob is named", JSON.stringify(value.worktree.binaryPaths) === JSON.stringify(["blobs/only.bin"]), JSON.stringify(value.worktree.binaryPaths));
+  }
+
   // ── a rename: both names in the pathspec, or git reports an addition ──────
   {
     await git(repo, ["mv", "a.txt", "renamed.txt"]);
@@ -172,6 +200,7 @@ try {
     await writeFile(join(repo, "blob.bin"), Buffer.concat([binary, Buffer.from([0x00, 0x20, 0x21])]));
     const value = await diffOf("blob.bin");
     check("binary: worktree flagged", value.worktree.binary === true, JSON.stringify(value.worktree));
+    check("binary: the file is named in binaryPaths", JSON.stringify(value.worktree.binaryPaths) === JSON.stringify(["blob.bin"]), JSON.stringify(value.worktree.binaryPaths));
     check("binary: git's own placeholder is what is sent", /Binary files .* differ/.test(value.worktree.diff), value.worktree.diff);
     await git(repo, ["checkout", "--", "blob.bin"]);
   }
@@ -216,6 +245,13 @@ try {
     check("bad cwd rejected", badCwd.ok !== true && pluginCode(badCwd) === "invalid-cwd", JSON.stringify(badCwd));
   }
 
+  // ── status reports the optional drafting capability ───────────────────────
+  {
+    const res = await call("status", { cwd: repo });
+    check("status: repo facts answer", res.ok === true && res.value.repo === true, JSON.stringify(res));
+    check("status: drafting is offered when the host provides llm", res.value.generate === true, JSON.stringify(res.value.generate));
+  }
+
   // ── outside a work tree: repo:false, not an error ─────────────────────────
   {
     const outside = await mkdtemp(join(tmpdir(), "dsh-git-norepo-"));
@@ -234,4 +270,4 @@ if (failures > 0) {
   console.error(`\n${failures} DIFF TEST(S) FAILED`);
   process.exit(1);
 }
-console.log("DIFF END-TO-END TESTS PASSED (worktree/index sides, untracked file + directory, rename pairing, deletion, binary, truncation, validation)");
+console.log("DIFF END-TO-END TESTS PASSED (worktree/index sides, untracked file + directory, per-file binary in mixed/all-blob directories, rename pairing, deletion, truncation, status capability, validation)");

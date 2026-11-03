@@ -67,9 +67,11 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
   变空时会自动落到已暂存。
 - **行号与配色**：左右两列行号（旧/新）取自每个 hunk 头，`+`/`-` 行走主题的
   成功/错误色，hunk 头单独一行，`\ No newline at end of file` 灰显。
-- **边界都有明确提示**：这一侧没有改动 / 二进制文件没有文本差异 / 差异过大只
-  显示开头一段 / 未跟踪目录里还有 N 个文件未展开 / 读取失败。超过 1500 行的
-  差异先渲染前 1500 行，按钮可展开全部（避免一次渲染几万个节点）。
+- **边界都有明确提示**：这一侧没有改动 / 二进制文件没有文本差异（混在未跟踪
+  目录里的二进制文件会按文件名列出，同一目录里的文本改动照常显示）/ 差异过大
+  只显示开头一段 / 未跟踪目录里还有 N 个文件未展开 / 读取失败。大差异不再一次
+  性塞进 DOM：不换行时按固定行高做**虚拟滚动**（只渲染可视区与上下少量预读），
+  换行（行高不定）时用「再显示 N 行」分页追加。
 - **未跟踪文件**：与空文件对比，显示成 `new file mode` 的新增 diff；未跟踪
   **目录**会把里面的文件逐个展开（上限 50 个，其余计入提示）。
 - **重命名**：同时把旧名与新名作为 pathspec 交给 git，否则 git 无法配对，会把
@@ -127,7 +129,7 @@ DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠
 
 | 半边 | 文件 | 职责 |
 | --- | --- | --- |
-| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`diff`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成走注入的 `llm` 服务。 |
+| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`diff`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成是可选的：`llm` **不在 `inject` 里**（硬依赖会让整行在宿主没起 `llm` 时永远 PENDING、路由不注册），每次调用按 `ctx.get("llm")` 读取，缺失时 `status.generate` 为 `false`、`generateMessage` 报 `llm-unavailable`。 |
 | 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@xia-sc/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
 
 ### 为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）
@@ -193,7 +195,7 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 
 载荷使用 `{ args }` 约定。`cwd` 必须是绝对路径；`branch` 匹配
 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`（不允许前导 `-`、`..`、`@{`、`\`、空白、
-控制字符）；`remote` 为普通单段。提交信息是真正的提交信息：一行主题 +
+控制字符）。提交信息是真正的提交信息：一行主题 +
 可选的多行正文。CRLF 会归一为 LF，逐行去掉行尾空白，去掉首尾空行并把连续
 空行折叠为一行（因此主题与正文之间那一行空行会保留）；空、超长（>10000
 字符）、含控制字符的信息报 `invalid-message`。信息经 stdin 以
@@ -202,18 +204,18 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 
 | 端点 | 参数 | 结果（`value`） |
 | --- | --- | --- |
-| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, changes: [{status, path, index, worktree, file, origFile}] }`。`path` 是展示串（重命名读作 `old → new`），`file`/`origFile` 是交给 `diff` 的 pathspec，`index`/`worktree` 是 porcelain-v2 的两个字母。 |
+| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, generate, changes: [{status, path, index, worktree, file, origFile}] }`。`path` 是展示串（重命名读作 `old → new`），`file`/`origFile` 是交给 `diff` 的 pathspec，`index`/`worktree` 是 porcelain-v2 的两个字母；`generate` 表示宿主是否提供可选的 `llm` 服务（供面板决定是否禁用「✨ AI 生成」）。 |
 | `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{name, short}] }` |
 | `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`，经 `git switch --guess`；浏览器会预检脏树并提前警告；因"本地修改会被覆盖"被拒绝时会带上可读前缀。 |
 | `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }`，经 `git switch --create <branch> <base>`（缺省 base 即 HEAD）；从基分支创建新分支并切换过去。 |
-| `fetch` | `{ cwd, remote? }` | `{ message }`（120s 超时） |
+| `fetch` | `{ cwd }` | `{ message }`（120s 超时；`git fetch` 本身没有 remote 参数——面板也没有 remote 选择，多 remote 仓库按 git 自己的 `branch.<name>.remote` 行为） |
 | `pull` | `{ cwd }` | `{ message }`，经 `git pull --ff-only`（绝不隐式合并） |
 | `stage` | `{ cwd }` | `{ message }`，经 `git add --all` |
-| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, truncated}, index: {…} }`。两侧一次读回（`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`）；`path` 必须是仓库内相对路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白），非法时报 `invalid-path`。未跟踪路径用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1），未跟踪目录用 `git ls-files --others --exclude-standard` 展开（上限 50 个，其余计入 `skipped`）。单侧超过 40 万字符在行边界截断并置 `truncated`；二进制置 `binary`。**只读**，不碰 index / 工作区 / 配置。 |
+| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, binaryPaths, truncated}, index: {…} }`。两侧一次读回（`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`）；`path` 必须是仓库内相对路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白），非法时报 `invalid-path`。未跟踪路径用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1），未跟踪目录用 `git ls-files --others --exclude-standard` 展开（上限 50 个，其余计入 `skipped`）。单侧超过 40 万字符在行边界截断并置 `truncated`。**二进制按文件判定**（在任何截断之前）：整侧只有二进制时 `binary: true`；混有文本时 `binary: false` 并用 `binaryPaths` 列出被隐藏的文件名，文本 hunk 照常发送。**只读**，不碰 index / 工作区 / 配置。 |
 | `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
 | `push` | `{ cwd }` | `{ message }`（120s 超时）。分支有上游时走普通 `git push`；**没有上游时自动 `git push --set-upstream <remote> <branch>`**（远端顺序 `remote.pushDefault` → `origin` → 唯一 remote），所以新建的分支可以一次推上去并开始跟踪。没有 remote、或多个 remote 且都没有 `origin` 时报 `no-remote`（附 `details.remotes`）；游离 HEAD 报 `detached-head`。 |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
-| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。`language` 是可选的**语言名**（顶栏 ⚙ 里的设置；缺失、`null`、空串与 `auto` 都表示「跟随仓库」），它会被写进 system prompt 强制整条信息只用该语言；形状或长度不合法（> 60 字符、含换行/引号/冒号等）报 `invalid-language`。失败码见 `error.details.code`：`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。`language` 是可选的**语言名**（顶栏 ⚙ 里的设置；缺失、`null`、空串与 `auto` 都表示「跟随仓库」），它会被写进 system prompt 强制整条信息只用该语言；形状或长度不合法（> 60 字符、含换行/引号/冒号等）报 `invalid-language`。失败码见 `error.details.code`：`llm-unavailable`（宿主没有提供 `llm` 服务；插件仍然挂载，只是禁用起草按钮）、`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
 
 > 失败结果的 `error.code` 在线路上固定为 `"internal"`（Connection 信封只要求它是字符串），
 > 插件自己的诊断码放在 `error.details.code`；客户端按该码做本地化文案。
@@ -287,8 +289,9 @@ dsh plugin --profile web remove @xia-sc/dsh-git
     信息（多行、CRLF、中文、前导 `-`、shell 元字符等），并确认非法信息被拒且
     不产生提交。
   - `npm run test:diff` —— **端到端**：临时仓库里逐个验证 `diff` 端点：工作区
-    / 已暂存两侧、未跟踪文件与**未跟踪目录**、**重命名配对**、删除、二进制、
-    40 万字符截断、以及路径校验与非仓库目录。
+    / 已暂存两侧、未跟踪文件与**未跟踪目录**、**逐文件二进制**（纯二进制目录
+    与文本+二进制混合目录）、**重命名配对**、删除、40 万字符截断、`status`
+    的能力位，以及路径校验与非仓库目录。
   - `npm run test:push` —— **端到端**（完全离线：本地 bare 仓库当 `origin`）：
     新建分支首次推送会 `--set-upstream` 创建远端分支并记录上游、已跟踪分支走
     普通 `git push`、游离 HEAD / 无 remote / 多 remote 无 `origin` 各自的诊断码，

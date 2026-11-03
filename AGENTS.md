@@ -26,7 +26,7 @@
 | `test/host-slots.mjs` | **slot-core 获取**：≤0.2.0 从安装树拿；0.2.1+ 宿主把 `dsh-client-ui-slots` 内联进 shell bundle、安装树没有它，于是按安装 renderer 的同版本从 npm 取真包（SRI 校验、按版本缓存到 `%TEMP%\dsh-git-slots\<version>`）；`DSH_GIT_SLOTS_ROOT` 是离线覆盖、`DSH_GIT_SLOTS_REGISTRY` 换镜像 | **首次跑门禁会联网一次**（约 1–2 s）；"装了解析不到"仍必须 FAIL，不许退化成 SKIP（见 §5） |
 | `test/generate.mjs` | AI 起草提交信息的纯单元：路由解析、prompt、截断、流式拼装、失败码 | 不 spawn git |
 | `test/render.mjs` | 双界面真实 React SSR：两个座位、提交区控件、diff 解析器与行渲染、`act()` 回传 | 需要 `react`/`react-dom`，见 §5 |
-| `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、重命名配对、删除、二进制、截断、校验） | 需要 spawn git，不在 `npm test` 内 |
+| `test/diff.mjs` | **端到端**：真临时仓库跑 `diff` 端点（两侧、未跟踪文件/目录、逐文件二进制与混合目录、重命名配对、删除、截断、`status` 能力位、校验） | 需要 spawn git，不在 `npm test` 内 |
 | `test/commit.mjs` | **端到端**：真临时仓库走 `commit` 端点，用 `git log --format=%B` 逐字节比对 | 同上 |
 | `test/push.mjs` | **端到端**：真临时仓库 + 本地 bare 仓库当 `origin`（完全离线）走 `push` 端点：无上游分支首次推送必须 `--set-upstream` 建远端分支并记录跟踪、已跟踪分支走普通 `git push`、游离 HEAD/无 remote/多 remote 无 origin 的诊断码、`remote.pushDefault` 顺序 | 同上；纯决策（`pushPlan`）由 `test/smoke.mjs` 守护，不 spawn git |
 | `test/ui/*.mjs` | 浏览器脚本（playwright-core + 本机 Chrome）：`verify-diff.mjs` 打真实 GUI 回归差异面板；`verify-settings.mjs` 自己起本地 http 服务、离线喂真实 React UMD + 真 `localStorage` 驱动设置弹层与语言（无需认证），并落 `test/ui/settings-popover.png` | `verify-diff.mjs` 需要认证 URL，见 §8；`verify-settings.mjs` 不需要 |
@@ -78,10 +78,14 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 宿主半只用 `node:` 内置模块 + 已经导入的 `@deepseek-ai/cordis`。以 pnpm `link:` 方式安装时，宿主包
 无法从插件的真实源码路径解析，声明这类导入会让插件**在加载期就崩**。`llm` 走注入的服务，不用 import。
 
-### 3.3 宿主 `inject` 是硬依赖，且 `connection.rpc.handle()` 对外部插件不可用
+### 3.3 宿主 `inject` 只放真硬依赖，`llm` 必须保持可选
 
-- `lib/index.js` 顶部：`inject = ["webServer", "connection", "llm"]`。缺 `webServer` 路由挂不上；缺 `connection`
-  没有围栏；缺 `llm` AI 起草不可用。
+- `lib/index.js` 顶部：`inject = ["webServer", "connection"]`。缺 `webServer` 路由挂不上；缺 `connection`
+  没有围栏。**`llm` 不许再进 `inject`**：宿主 `requiredStartupEntryIds` 不含 `llm`，硬依赖会让整行在
+  宿主没起 `dsh-llm` 时一直 PENDING → `/dsh-git-rpc` 不注册 → 面板收到 405 并显示「不是 Git 仓库」
+  （`COMPAT.md` §4.5 修正块）。它在每次调用时经 `optionalLlm(ctx)`（`ctx.get("llm")`）读取：
+  缺失时 `status.generate=false`、`generateMessage` 报 `llm-unavailable`、客户端禁用「✨ AI 生成」。
+  `test/host-mount.mjs` 同时守护"有 llm"和"没有 llm"两种宿主都能挂载。
 - dsh ≥ 0.1.5-rc.1 起，外部插件调用 `ctx.connection.rpc.handle()` 会以
   `cannot get property "webServer" without inject` 挂载失败（原因见 `lib/index.js` 头部注释与 README）。
   本插件的做法是**自持 `/dsh-git-rpc` 路由**并自己收发同一套 Connection 信封。
@@ -105,7 +109,8 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 
 - 一律经 `runGit(cwd, args, signal, timeoutMs, stdin, allowExit)`；参数是数组，绝不拼字符串进 shell；
   本地 30s、网络（fetch/pull/push）120s；输出上限 32MB。
-- 入参在跑 git 之前校验：`cwd` 必须绝对；`branch` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`；`remote` 是单段；
+- 入参在跑 git 之前校验：`cwd` 必须绝对；`branch` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`（fetch 没有
+  `remote` 参数，别再把"单段 remote"写回契约）；
   `path` 必须仓库内相对路径（见 `normalizedPath`：拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白）。
 - `git diff --no-index` 把"两边不同"报成退出码 1，所以 `runGit` 有 `allowExit` 参数；别把非零退出码
   一律当成失败，也别为了绕过它去改 git 行为。
@@ -161,11 +166,20 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 - diff 渲染的关键规则：`--- `/`+++ ` **只在 hunk 之外**认作文件头（hunk 内以 `--` 开头的删除行仍是改动）；
   未换行时行宽取 `max-content`（底色铺满横向滚动），换行时置 0（否则 `pre-wrap` 永不生效）；换行属性要写在
   文本 span 上（它自带 `white-space: pre`，写在行上会被覆盖）。
+- **大 diff 不再整段塞 DOM**：不换行时按固定行高（`DIFF_ROW_HEIGHT = 18`，与 `S.diffRow.lineHeight` 同步）
+  做虚拟滚动——`diffWindow(total, scrollTop, viewportH, rowH, overscan)` 是纯函数、已进 `__internals`，
+  渲染可视区 + 上下 overscan，用上下两个 spacer 撑住滚动条；视口高度由 `ResizeObserver` 量，首帧/SSR 用
+  `DIFF_VIEWPORT_FALLBACK`。换行模式行高不定，改用「再显示 N 行」分页（`diff.showMore`）。
+  **提示卡片在滚动容器之外**（`diff-notices`）：它们的高度不可预测，放进滚动区会让行号映射偏移。
+  改行高/字号时三个数（`DIFF_ROW_HEIGHT`、`S.diffRow.lineHeight`、spacer 计算）必须一起动。
+- **二进制按文件判定，不按整侧**：宿主在截断之前逐文件收集 `binaryPaths`；整侧只有二进制才 `binary: true`，
+  混有文本时 `binary: false` + 隐藏文件名列表（`diff-binary-hidden`），文本 hunk 照常渲染。
 - **`data-dsh-git` 是测试钩子**，改名等于改测试：`dock`、`dock-row`、`panel`、`panel-drag`、`panel-left`、
   `panel-resize`、`output`、`output-toggle`、`output-detail`、`changes`、`changes-header`、`changes-body`、
-  `changes-more`、`log`、`log-header`、`log-body`、`log-more`、`change-row`、`diff`、`diff-header`、`diff-body`、
-  `diff-row`、`diff-close`、`diff-wrap`、`diff-copy`、`diff-reload`、`diff-scope-worktree`、`diff-scope-index`、
-  `diff-empty`、`diff-binary`、`diff-untracked`、`settings`、`settings-backdrop`、`settings-close`、
+  `changes-more`、`log`、`log-header`、`log-body`、`log-more`、`change-row`、`diff`、`diff-notices`、`diff-header`、
+  `diff-body`、`diff-row`、`diff-close`、`diff-wrap`、`diff-copy`、`diff-reload`、`diff-scope-worktree`、
+  `diff-scope-index`、`diff-show-more`、`diff-empty`、`diff-binary`、`diff-binary-hidden`、`diff-untracked`、
+  `generate`、`generate-unavailable`、`settings`、`settings-backdrop`、`settings-close`、
   `settings-popover`、`settings-language`、`settings-language-text`；行还有 `data-kind`、选中行有 `data-active`。
 - **列表区块是两张卡片**（`sectionView`）：标题行 = chevron + 文案 + 计数胶囊，整段折叠；`all=false` 时只显示
   前 `CHANGES_PREVIEW`/`LOG_PREVIEW` 行并在底部给「显示全部 N 项」。**折叠与展开预览是两个 state**
@@ -208,7 +222,7 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 - **git 的 `message` 文本在 `rpc()` 边界剥 ANSI**（`stripAnsiEscapes`）：远端会给自己的 banner 上色
   （Gitee 甚至先发一个截断的 `ESC[0`），DOM 里没有字形可渲染，只剩 `[0[01;33m` 这种参数当正文显示。
   只剥 `value.message` / `error.message`，**diff body 与路径一律不动**（内容必须逐字节保真）。
-- `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`GitDiffPane`、`DIFF_ROW`、
+- `exports.__internals` 是**给 `test/render.mjs` 的测试出口**（解析器、行渲染、`diffWindow`、`GitDiffPane`、`DIFF_ROW`、
   `stripAnsiEscapes`、`outputView`、`settingsView`、`LANGUAGE_PRESETS`、`sectionView`、`changeTagStyle`、
   `panelBoxStyle`、`DIFF_PANEL_HEIGHT`、`sessionModelRoute`、`networkPrimary`）。SSR 不跑 effect，所以面板自己的读取无法用静态渲染驱动，只能这样测；运行时不要用它。
 - **提交信息语言是用户偏好，不是会话状态**：`generateLanguage`/`generateLanguageText` 由 store 持有并写进
@@ -223,6 +237,10 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
   `GenerateOptions.sessionId`——部分网关（opencode 系）要求会话亲和头，而宿主只在请求带 `sessionId` 时
   才转给适配器。模型路由由 `sessionModelRoute()` 从**两个投影面**取（行上的 `projectionValues` 与
   快照的 `projectionsBySession[id].values`），两面都不能少，否则静默回落。
+- **起草能力位来自 `status.generate`**：store 的 `generateAvailable` 默认 `true`（旧宿主/读失败都不误禁用），
+  `applyData()` 用 `sv.generate !== false` 落地。为假时「✨ AI 生成」按钮 `disabled` + `title="generate.unavailable"`
+  并在提交卡片里挂一行提示（`data-dsh-git="generate-unavailable"`）；`describeGenerate` 也认识
+  `llm-unavailable`。别把这条写成前端猜测（探针请求），能力位必须由宿主同一次 status 读回来。
 - 面板的"自动刷新"由 `dataVersion` 驱动：它是 `cwd | oid | branch | dirty | 每个文件的 XY 字母与路径`。
   带上 XY 是因为 `git add` 恰好不改文件数量与 dirty 计数——只按数量做签名，暂存后打开的 diff 不会重读。
 
@@ -367,7 +385,8 @@ node test/ui/verify-settings.mjs        # 离线：真 Chrome + 真 React + 真 
 - **不依赖宿主右侧 Sidebar 的标签页 API**（`sidebarRight` / `sidebarRightTabs`）：那一面还在快速迭代，
   diff 的请求与渲染都在插件内自成一体。想改成右栏标签页之前先确认这个前提是否还成立。
 - 不做语法高亮（会引入第三方依赖，违反 §3.1）；不做逐文件暂存/丢弃；不做"点最近提交看某个 commit 的 diff"。
-- 规模上限：单侧 diff 40 万字符（行边界截断）、单次渲染 1500 行（可展开）、未跟踪目录展开 50 个文件（其余计数提示）。
+- 规模上限：单侧 diff 40 万字符（行边界截断）；渲染上限由虚拟滚动承担（不换行时只渲染可视区，
+  换行时每页 1500 行）；未跟踪目录展开 50 个文件（其余计数提示）。
 - 面板状态是内存态：刷新后回到"未选文件"的单栏形态，这是有意的。
 
 ## 10. English summary

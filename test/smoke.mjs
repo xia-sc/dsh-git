@@ -17,8 +17,16 @@ import { apply, inject, pushPlan } from "../lib/index.js";
 const ABS_CWD = join(tmpdir(), "dsh-git-smoke-abs");
 const NO_REPO_CWD = join(tmpdir(), "dsh-git-smoke-no-repo");
 
-if (!Array.isArray(inject) || !inject.includes("webServer") || !inject.includes("connection") || !inject.includes("llm")) {
-  throw new Error(`host inject must declare webServer + connection + llm: ${JSON.stringify(inject)}`);
+if (!Array.isArray(inject) || !inject.includes("webServer") || !inject.includes("connection")) {
+  throw new Error(`host inject must declare webServer + connection: ${JSON.stringify(inject)}`);
+}
+// `llm` backs ONE optional capability (AI drafting). A hard inject made the
+// whole plugin row wait for a service the host does not treat as a required
+// startup entry: a missing llm then left the channel unmounted and the panel
+// got a 405. It is read opportunistically (`ctx.get("llm")`), so it must never
+// come back into the inject list.
+if (inject.includes("llm")) {
+  throw new Error(`llm must stay an optional service, not a hard inject: ${JSON.stringify(inject)}`);
 }
 
 // ── route capture ────────────────────────────────────────────────────────────
@@ -36,6 +44,7 @@ const llm = {
 const ctx = {
   effect(fn) { effects += 1; return fn(); },
   get(name) {
+    if (name === "llm") return llm;
     if (name !== "connection") return undefined;
     return { requestRejection: () => reject };
   },
@@ -315,21 +324,47 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   }
 }
 
-// invalid remote names
+// fetch takes no remote argument. The panel never sent one, so the contract no
+// longer advertises a knob with no surface: a remote in the payload is ignored
+// (neither validated nor forwarded), and the call still reaches git / the cwd
+// check exactly like a remote-less one.
 {
-  for (const remote of ["", "a b", "-x", "a/b", "a..b", "x".repeat(200), 42, null]) {
-    const res = await call("fetch", { cwd: ABS_CWD, remote });
-    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-remote") {
-      throw new Error(`evil remote not rejected: ${JSON.stringify(remote)} -> ${JSON.stringify(res)}`);
+  for (const remote of ["", "a b", "-x", "a/b", "a..b", "x".repeat(200), 42, null, "origin"]) {
+    const res = await call("fetch", { cwd: NO_REPO_CWD, remote });
+    if (pluginCode(res) === "invalid-remote" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`fetch must ignore the removed remote argument: ${JSON.stringify(remote)} -> ${JSON.stringify(res)}`);
     }
   }
-  // undefined remote is allowed (validRemote(undefined) === true) but never
-  // reaches git here because the call is rejected on cwd first in the loop
-  // above; just assert a valid absolute cwd with no remote dispatches to git
-  // (which will fail with not-a-repo or git-error — either is fine, but not
-  // invalid-remote).
-  const res = await call("fetch", { cwd: NO_REPO_CWD });
-  if (res.ok || pluginCode(res) === "invalid-remote") throw new Error(`fetch without remote should not be invalid-remote: ${JSON.stringify(res)}`);
+  const res = await call("fetch", { cwd: "relative/path" });
+  if (res.ok || pluginCode(res) !== "invalid-cwd") {
+    throw new Error(`fetch must still validate cwd: ${JSON.stringify(res)}`);
+  }
+}
+
+// llm is optional: without it the plugin still mounts its channel (the row does
+// not wait for a service the host does not require at startup), and the one
+// endpoint that needs it answers a stable code before touching git.
+{
+  let noLlmRoute = null;
+  apply({
+    effect(fn) { return fn(); },
+    get(name) { return name === "connection" ? { requestRejection: () => undefined } : undefined; },
+    webServer: { register(candidate) { noLlmRoute = candidate; return () => { noLlmRoute = null; }; } }
+  });
+  if (noLlmRoute === null) throw new Error("the plugin must mount without the llm service");
+  const savedRoute = route;
+  route = noLlmRoute;
+  try {
+    const res = await call("generateMessage", { cwd: ABS_CWD });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "llm-unavailable") {
+      throw new Error(`generateMessage without llm must answer llm-unavailable: ${JSON.stringify(res)}`);
+    }
+    // Parameter validation still comes first, so a bad mode is not masked.
+    const badMode = await call("generateMessage", { cwd: ABS_CWD, mode: "everything" });
+    if (pluginCode(badMode) !== "invalid-mode") throw new Error(`mode validation must precede the llm check: ${JSON.stringify(badMode)}`);
+  } finally {
+    route = savedRoute;
+  }
 }
 
 // invalid commit messages: empty, over-long, and messages carrying control

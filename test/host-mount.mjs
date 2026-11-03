@@ -70,7 +70,9 @@ await app.plugin({
   }
 }).await();
 
-// dsh-llm stand-in: the plugin injects `llm` for commit-message generation.
+// dsh-llm stand-in. It is NOT in the plugin's `inject` list (AI drafting is
+// optional and must degrade, never hold the row back), but the host that has it
+// must still resolve it through `ctx.get("llm")` for the capability bit below.
 await app.plugin({
   name: "llm",
   apply(ctx) {
@@ -188,4 +190,50 @@ console.log(`routes: ${routes.map((route) => `${route.kind} ${route.path}`).join
   }
 }
 
-console.log("\nHOST MOUNT TEST PASSED (the row activates and owns /dsh-git-rpc)");
+// ── a host WITHOUT dsh-llm must still mount the row ──────────────────────────
+// The drafting service used to be a hard inject, and the host does not list
+// `llm` among its required startup entries: when it was missing, the plugin row
+// stayed PENDING, `/dsh-git-rpc` was never registered, and the browser got a 405
+// (COMPAT.md §4.5). Mounting without it is the actual contract now.
+{
+  const noLlmRoutes = [];
+  const noLlmApp = new Context();
+  await noLlmApp.plugin({
+    name: "web-server",
+    apply(ctx) {
+      ctx.provide("webServer", {
+        register(route) { noLlmRoutes.push(route); return () => {}; }
+      });
+    }
+  }).await();
+  await noLlmApp.plugin({
+    name: "credentials",
+    apply(ctx) {
+      ctx.provide("credentials", { get: async () => undefined, set: async () => {} });
+    }
+  }).await();
+  await noLlmApp.plugin({
+    name: "client-connection",
+    inject: ["credentials"],
+    apply(ctx) {
+      const auth = { isAuthenticated: () => true, authorizeIndex: () => true, authenticatedUrl: (url) => url };
+      new HostConnectionService(ctx, [], auth);
+      ctx.inject(["webServer"], (webCtx) => {
+        webCtx.effect(() => webCtx.webServer.register({ kind: "prefix", path: "/api", handler: () => {} }), "client-connection: /api route");
+      });
+    }
+  }).await();
+  const noLlmFiber = noLlmApp.plugin({ name, inject, apply });
+  try {
+    await noLlmFiber.await();
+  } catch (error) {
+    throw new Error(`dsh-git must mount on a host without the optional llm service: ${error.message}`);
+  }
+  const noLlmOwn = noLlmRoutes.find((route) => route.path === "/dsh-git-rpc");
+  if (noLlmOwn === undefined) {
+    throw new Error(`a host without llm must still get /dsh-git-rpc (routes: ${noLlmRoutes.map((route) => route.path).join(", ")})`);
+  }
+  console.log("mount without llm: the row activates and still owns /dsh-git-rpc");
+}
+
+console.log("\nHOST MOUNT TEST PASSED (the row activates and owns /dsh-git-rpc, with and without the optional llm service)");
