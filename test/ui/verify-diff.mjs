@@ -114,7 +114,12 @@ const BRANCHES = {
   repo: true,
   current: "verify-ui",
   local: [{ name: "verify-ui", current: true, upstream: "origin/verify-ui", sha: "1111111" }],
-  remote: [{ name: "origin/verify-ui", short: "verify-ui" }]
+  // Two remotes carrying the same branch name: the switcher must label them with
+  // the full ref so the two options are not both just `verify-ui`.
+  remote: [
+    { remote: "origin", branch: "verify-ui", name: "origin/verify-ui", short: "verify-ui" },
+    { remote: "upstream", branch: "verify-ui", name: "upstream/verify-ui", short: "verify-ui" }
+  ]
 };
 
 let failures = 0;
