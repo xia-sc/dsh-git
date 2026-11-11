@@ -877,6 +877,31 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   console.log("operation output:", JSON.stringify(pushResult.detail.slice(0, 48)), "/ stage summary is one localized line");
 }
 
+// The operation card belongs to ONE repository. Switching the session/workspace
+// used to keep it (it was preserved unconditionally so a failed action's card
+// would not vanish), so a failed push from the previous workspace stayed pinned
+// above the next repository's clean header. A same-workspace re-read must still
+// keep it — that is the "refreshing never flashes" rule.
+{
+  const pushed = await store.act("push", () => store.verbs.push("C:/repo"));
+  if (pushed?.ok !== true) throw new Error("push fixture failed");
+  if (store.getSnapshot().lastResult === null) throw new Error("a completed action must publish its result card");
+  await store.refresh("C:/repo");
+  if (store.getSnapshot().lastResult === null) throw new Error("a same-workspace re-read must keep the result card");
+
+  await store.refresh("C:/other");
+  if (store.getSnapshot().lastResult !== null) {
+    throw new Error(`an operation card must not follow a workspace switch: ${JSON.stringify(store.getSnapshot().lastResult)}`);
+  }
+  // Switching back does not resurrect the stale card either.
+  await store.refresh("C:/repo");
+  if (store.getSnapshot().lastResult !== null) throw new Error("a stale operation card must not come back");
+  // Leave one card in place for the later body-order assertions (they expect the
+  // feedback block above the lists).
+  await store.act("push", () => store.verbs.push("C:/repo"));
+  console.log("workspace switch: the operation card never follows another repository");
+}
+
 // The push verb forwards an optional Session id. The panel supplies it so the
 // host can ask the optional forge-session service to discover the branch's open
 // change request (a panel push is not a shell tool call, which is the only thing

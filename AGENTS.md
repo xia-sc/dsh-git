@@ -173,7 +173,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 2. 宿主半改动 → `test:diff`/`test:commit`/`test:push`/`test:stash`/`test:discard` + 请用户重启
    `dsh web` 后在真 GUI 点一遍。浏览器半改动 → 刷新页面，用 playwright/MCP 真点：开面板 → 点变更行 →
    `[data-dsh-git="diff"]` 出现 → 收起 → 拖右边缘 → 双击复位；设置走 `test:ui:settings`。
-3. 发版：改 `package.json` 版本（当前 0.9.0）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
+3. 发版：改 `package.json` 版本（当前 0.9.1）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
    `git push origin master` → `git tag -a vX.Y.Z -m "…"` + `git push origin vX.Y.Z`（推 tag 即发布：
    workflow 校验 tag/版本、跑 `npm test`、`npm publish --provenance`）→ `gh release create`。
 4. CI 排错：workflow 表达式**只认单引号**；发布后别用 `npm view` 判断（缓存滞后），权威判据是
