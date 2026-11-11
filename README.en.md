@@ -33,7 +33,8 @@ amend the last commit · click a change to see its diff · new branch from any b
   tracked files go back to HEAD (`git restore --staged --worktree`), untracked files/directories
   are removed (`git clean -f -d`); conflicted rows have no such control, and there is no
   "discard everything".
-- **Amend the last commit**: the switch in the commit card pre-fills the previous message (never
+- **Amend the last commit**: a rare action, so it folds into a quiet line under the commit button
+  (never side by side with "stage all"). Opening it pre-fills the previous message (never
   overwriting an existing draft) and turns the button into Amend. It reuses the same message
   normalization and `--cleanup=whitespace`, plus `--amend`. Rewriting a pushed branch needs a
   force push, which the plugin never does automatically; Commit & push is disabled while amending.

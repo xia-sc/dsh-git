@@ -142,7 +142,9 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
   必须 `stopPropagation`；cwd 变化/目标消失/面板收起清空；冲突行不渲染 ✕。
 - **amend**：`amendOn`/`amendLoading`/`amendError` 在组件 state；打开且草稿为空时 `headMessage`
   预填（不覆盖已有草稿），`↻` 可重读；提交走 `act("amend", () => verbs.commit(cwd, text, true))`；
-  成功后关开关。覆盖按钮边框必须整条重写 `border`（别用 `borderColor` 盖简写，React 会警告）。
+  成功后关开关。入口 `amendView` 是**折叠态**：`S.amendFoldToggle`（11px、次要色、透明边框）排在
+  提交按钮**下方**，不再占工具行——与「暂存全部」等宽相邻时误触代价太大。覆盖按钮边框必须整条重写
+  `border`（别用 `borderColor` 盖简写，React 会警告）。
 - **forge**：`gitPush` 成功后用 `branch.<name>.remote/.merge`（或 `pushPlan.remote`）+
   `git remote get-url --push` 解析目标，再 `notifyForgeDiscovery`；客户端 `verbs.push(cwd, sessionId)`，
   `doPush`/`doCommitPush` 必须传 `state.sessionId`（null 时省略）。
@@ -173,7 +175,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 2. 宿主半改动 → `test:diff`/`test:commit`/`test:push`/`test:stash`/`test:discard` + 请用户重启
    `dsh web` 后在真 GUI 点一遍。浏览器半改动 → 刷新页面，用 playwright/MCP 真点：开面板 → 点变更行 →
    `[data-dsh-git="diff"]` 出现 → 收起 → 拖右边缘 → 双击复位；设置走 `test:ui:settings`。
-3. 发版：改 `package.json` 版本（当前 0.9.1）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
+3. 发版：改 `package.json` 版本（当前 0.9.2）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
    `git push origin master` → `git tag -a vX.Y.Z -m "…"` + `git push origin vX.Y.Z`（推 tag 即发布：
    workflow 校验 tag/版本、跑 `npm test`、`npm publish --provenance`）→ `gh release create`。
 4. CI 排错：workflow 表达式**只认单引号**；发布后别用 `npm view` 判断（缓存滞后），权威判据是

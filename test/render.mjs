@@ -703,17 +703,20 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   }, commonProps.t));
   if (!/data-dsh-git="discard-apply"[^>]*disabled/.test(busyConfirm)) throw new Error("a busy panel must disable the discard button");
 
-  // The amend row: off by default, and while on it explains itself and offers
-  // the "load the last message" button; a failed read shows the reason inline.
+  // The amend row: folded by default (a quiet line under the commit button, not
+  // a full-width button beside "stage all"), and while on it explains itself and
+  // offers the "load the last message" button; a failed read shows the reason.
   const amendOff = renderToStaticMarkup(amendView({
     on: false, loading: false, error: null, onToggle: () => {}, onLoad: () => {}
   }, commonProps.t));
   if (!amendOff.includes('data-dsh-git="amend-toggle"') || !amendOff.includes('aria-pressed="false"')) throw new Error("the amend toggle must start off");
+  if (!amendOff.includes('aria-expanded="false"')) throw new Error("the folded amend line must advertise itself as collapsed");
+  if (amendOff.includes("flex:1 1 0")) throw new Error("the amend toggle must not be an equal-width row button any more");
   if (amendOff.includes('data-dsh-git="amend-load"') || amendOff.includes("amend.hint")) throw new Error("the amend row must stay compact while off");
   const amendOn = renderToStaticMarkup(amendView({
     on: true, loading: false, error: null, onToggle: () => {}, onLoad: () => {}
   }, commonProps.t));
-  for (const needle of ['aria-pressed="true"', 'data-dsh-git="amend-load"', "amend.hint"]) {
+  for (const needle of ['aria-pressed="true"', 'aria-expanded="true"', 'data-dsh-git="amend-load"', "amend.hint"]) {
     if (!amendOn.includes(needle)) throw new Error(`the amend row is missing ${JSON.stringify(needle)}`);
   }
   const amendNoCommit = renderToStaticMarkup(amendView({
@@ -747,6 +750,14 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     if (!html.includes(needle)) throw new Error(`the panel is missing ${JSON.stringify(needle)}`);
   }
   if (html.includes('data-dsh-git="stash-body"')) throw new Error("the stash card must start folded");
+  // The frequent controls (stage all / draft basis / generate) own the row; the
+  // rare amend line lives below the composer, so no row neighbours it.
+  const amendAt = html.indexOf('data-dsh-git="amend"');
+  const composerAt = html.indexOf("<textarea");
+  if (amendAt < 0) throw new Error("the amend line is missing from the panel");
+  if (!(composerAt >= 0 && amendAt > composerAt)) {
+    throw new Error("the amend line must sit BELOW the composer, not beside the stage-all row");
+  }
   if (html.split('data-dsh-git="change-discard"').length - 1 !== 2) {
     throw new Error("every non-conflicted change row needs a discard control");
   }
