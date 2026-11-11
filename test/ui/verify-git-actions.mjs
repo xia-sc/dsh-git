@@ -51,6 +51,7 @@ const INDEX = `<!doctype html><html><head><meta charset="utf-8"><title>dsh-git a
     if (endpoint === "branches") return { ok: true, value: { repo: true, current: status.branch, local: [{ name: status.branch, current: true, sha: status.oid, upstream: "origin/main" }], remote: [] } };
     if (endpoint === "log") return { ok: true, value: { repo: true, commits: [{ sha: status.oid, author: "me", subject: "init", refs: "HEAD -> " + status.branch }] } };
     if (endpoint === "headMessage") return { ok: true, value: { message: "feat: previous subject\\n\\nPrevious body." } };
+    if (endpoint === "amendCheck") return { ok: true, value: { pushed: window.__amendPushed === true, refs: window.__amendPushed === true ? ["origin/main"] : [], upstream: "origin/main" } };
     if (endpoint === "diff") return { ok: true, value: { repo: true, path: payload && payload.args ? payload.args.path : "README.md", origPath: null, untracked: false, skipped: 0, worktree: { diff: "diff --git a/README.md b/README.md\\n--- a/README.md\\n+++ b/README.md\\n@@ -1 +1 @@\\n-old\\n+new\\n", binary: false, truncated: false }, index: { diff: "", binary: false, truncated: false } } };
     return { ok: true, value: { message: "" } };
   }
@@ -213,6 +214,20 @@ try {
   const push = await lastCall("push");
   check("the network toolbar offers a plain push", clickedPush === true);
   check("the panel push carries the session id", push !== null && push.payload.args.sessionId === "s1", JSON.stringify(push?.payload));
+
+  // ── amend on a published HEAD asks before rewriting it ──────────────────
+  // The knock-on effect is a force push, which this plugin never performs, so
+  // the mode must stay off until the user confirms the warning.
+  await page.evaluate(() => { window.__amendPushed = true; });
+  await page.click('[data-dsh-git="amend-toggle"]');
+  await page.waitForSelector('[data-dsh-git="amend-warn"]', { timeout: 5000 });
+  check("amend warns before rewriting a published commit", (await page.locator('[data-dsh-git="amend-warn-confirm"]').count()) === 1);
+  check("the warning names the remote ref", (await page.locator('[data-dsh-git="amend-warn"]').innerText()).includes("origin/main"));
+  check("the warning keeps amend mode off", (await page.locator('[data-dsh-git="amend-load"]').count()) === 0);
+  await page.click('[data-dsh-git="amend-warn-cancel"]');
+  await page.waitForTimeout(150);
+  check("cancelling the warning leaves amend mode off", (await page.locator('[data-dsh-git="amend-warn"]').count()) === 0);
+  await page.evaluate(() => { window.__amendPushed = false; });
 
   // ── amend: the toggle reads HEAD's message and the commit is an amend ───
   await page.click('[data-dsh-git="amend-toggle"]');

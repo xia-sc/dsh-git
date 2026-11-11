@@ -34,10 +34,13 @@ amend the last commit · click a change to see its diff · new branch from any b
   are removed (`git clean -f -d`); conflicted rows have no such control, and there is no
   "discard everything".
 - **Amend the last commit**: a rare action, so it folds into a quiet line under the commit button
-  (never side by side with "stage all"). Opening it pre-fills the previous message (never
-  overwriting an existing draft) and turns the button into Amend. It reuses the same message
-  normalization and `--cleanup=whitespace`, plus `--amend`. Rewriting a pushed branch needs a
-  force push, which the plugin never does automatically; Commit & push is disabled while amending.
+  (never side by side with "stage all"). Opening it first asks the host whether HEAD is already on a
+  remote (a read of the local remote-tracking refs, no fetch). If it is, the panel does not enter
+  the mode: it warns inline with the remote refs (`origin/main`, …) — rewriting a published commit
+  makes the next push a force push, which most remotes reject — and only "Amend anyway" continues.
+  Confirming pre-fills the previous message (never overwriting an existing draft) and turns the
+  button into Amend. It reuses the same message normalization and `--cleanup=whitespace`, plus
+  `--amend`. The plugin never force-pushes; Commit & push is disabled while amending.
 - **Forge cooperation (dsh >= 0.2.2)**: after a successful push the plugin calls the host's
   optional `forgeSession.discoverBranch`, so the official Forge panel discovers the branch's open
   PR — a panel push is not a shell call, so forge would otherwise never learn about it. Older
@@ -93,6 +96,7 @@ messages are `invalid-message`; the message reaches git on stdin through
 | `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, binaryPaths, truncated}, index: {…} }`; both sides in one read, untracked via `--no-index`, 400k-char per-side truncation, binary decided per file; **read-only** |
 | `commit` | `{ cwd, message, amend? }` | `{ message }`; `amend:true` runs `--amend --cleanup=whitespace --file=-` (`no-commit` without HEAD); missing author → `missing-author` |
 | `headMessage` | `{ cwd }` | `{ message }` (`git log -1 --format=%B`); `no-commit` when there is no commit; read-only |
+| `amendCheck` | `{ cwd }` | `{ pushed, refs, upstream }`; `pushed` comes from `git branch -r --contains HEAD` (the local remote-tracking refs — **read-only, no fetch**), `refs` lists them (up to 5), `upstream` is the branch's tracking upstream or null; `no-commit` without HEAD |
 | `push` | `{ cwd, sessionId? }` | `{ message }` (120s); no upstream → automatic `--set-upstream` (`remote.pushDefault`→`origin`→only remote, else `no-remote`); `sessionId` is an optional forge-discovery hint, silently ignored when unusable |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }` (clamped 1..50) |
 | `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`; failure codes `llm-unavailable` / `no-changes` / `no-provider` / `no-model` / `llm-truncated` / `llm-empty` / `cancelled` / `llm-failed` |
@@ -114,8 +118,9 @@ messages are `invalid-message`; the message reaches git on stdin through
   conflicted paths are refused; untracked paths use `clean -f -d` (no `-x`, ignored files stay).
 - **Stash follows git**: untracked files excluded by default; a conflicting pop keeps the entry;
   no `stash drop`/`apply`.
-- **Amend rewrites history**: no automatic force push; the success line says so; the composite
-  action is disabled while amending.
+- **Amend rewrites history**: the entry checks whether HEAD is already published and asks inline
+  (naming the remote refs) before entering the mode when it is; no automatic force push; the
+  success line says so; the composite action is disabled while amending.
 - **Forge cooperation is optional**: only the host's public `discoverBranch` (read-only lookup);
   older hosts / missing providers skip silently; no fake shell tool events, no session-log writes,
   no direct writes to forge internals.

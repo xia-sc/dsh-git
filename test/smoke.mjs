@@ -175,7 +175,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid cwd (rejected before any git spawn) for every endpoint
 {
-  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "stash", "stashPop", "discard", "headMessage", "diff", "commit", "push", "log", "generateMessage"];
+  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "stash", "stashPop", "discard", "headMessage", "amendCheck", "diff", "commit", "push", "log", "generateMessage"];
   for (const ep of endpoints) {
     const res = await call(ep, { cwd: "relative/path" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-cwd") {

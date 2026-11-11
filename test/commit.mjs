@@ -173,6 +173,8 @@ try {
       check("amend without HEAD reports no-commit", res.ok !== true && pluginCode(res) === "no-commit", JSON.stringify(res));
       const head = await call("headMessage", { cwd: emptyRepo });
       check("headMessage without HEAD reports no-commit", head.ok !== true && pluginCode(head) === "no-commit", JSON.stringify(head));
+      const amendCheckEmpty = await call("amendCheck", { cwd: emptyRepo });
+      check("amendCheck without HEAD reports no-commit", amendCheckEmpty.ok !== true && pluginCode(amendCheckEmpty) === "no-commit", JSON.stringify(amendCheckEmpty));
     } finally {
       await rm(emptyRepo, { recursive: true, force: true });
     }
@@ -181,6 +183,40 @@ try {
   {
     const head = await call("headMessage", { cwd: repo });
     check("headMessage returns the last message", head.ok === true && head.value.message === "feat: amended subject\n\nNew body.", JSON.stringify(head));
+  }
+
+  // ── amendCheck: is HEAD already on a remote? ──────────────────────────────
+  // The panel asks before entering amend mode: rewriting a published commit
+  // makes the next push a force push, which this plugin never performs. The
+  // answer comes from the local remote-tracking refs (no fetch, no network), so
+  // it uses the same view as every other command here. A remote-tracking ref is
+  // created with update-ref instead of a real push: same ref, no network.
+  {
+    const noRemote = await call("amendCheck", { cwd: repo });
+    check("amendCheck reports an unpublished HEAD", noRemote.ok === true && noRemote.value.pushed === false, JSON.stringify(noRemote));
+    check("amendCheck names no refs without one", noRemote.ok === true && Array.isArray(noRemote.value.refs) && noRemote.value.refs.length === 0, JSON.stringify(noRemote));
+
+    const bare = await mkdtemp(join(tmpdir(), "dsh-git-amendcheck-bare-"));
+    try {
+      await git(bare, ["init", "--bare", "--quiet"]);
+      await git(repo, ["remote", "add", "origin", bare]);
+      const branch = (await git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+      const head = (await git(repo, ["rev-parse", "HEAD"])).trim();
+      await git(repo, ["update-ref", `refs/remotes/origin/${branch}`, head]);
+      await git(repo, ["branch", "--set-upstream-to", `origin/${branch}`, branch]);
+      const published = await call("amendCheck", { cwd: repo });
+      check("amendCheck reports a published HEAD", published.ok === true && published.value.pushed === true, JSON.stringify(published));
+      check("amendCheck names the remote ref", published.ok === true && published.value.refs.includes(`origin/${branch}`), JSON.stringify(published));
+      check("amendCheck reports the tracking upstream", published.ok === true && published.value.upstream === `origin/${branch}`, JSON.stringify(published));
+      // A commit made on top of the published one is unpublished again.
+      await stageOne("unpublished.txt");
+      await call("commit", { cwd: repo, message: "chore: local only" });
+      const local = await call("amendCheck", { cwd: repo });
+      check("amendCheck reports a new local HEAD as unpublished", local.ok === true && local.value.pushed === false, JSON.stringify(local));
+    } finally {
+      await git(repo, ["remote", "remove", "origin"]).catch(() => {});
+      await rm(bare, { recursive: true, force: true });
+    }
   }
 } finally {
   await rm(repo, { recursive: true, force: true });

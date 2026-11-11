@@ -726,6 +726,31 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     throw new Error("an amend read failure must replace the hint with its reason");
   }
 
+  // Pre-amend pre-flight: when the host reports HEAD is already on a remote the
+  // panel does NOT enter the mode — it asks first, naming the remote refs, and
+  // only "amend anyway" (or a second click) continues. Amending a published
+  // commit forces a force push, which this plugin never performs.
+  const amendWarn = renderToStaticMarkup(amendView({
+    on: false,
+    loading: false,
+    error: null,
+    warning: { refs: ["origin/main", "upstream/main"], upstream: "origin/main" },
+    onToggle: () => {}, onLoad: () => {}, onConfirm: () => {}, onCancel: () => {}
+  }, commonProps.t));
+  for (const needle of [
+    'data-dsh-git="amend-warn"',
+    'data-dsh-git="amend-warn-confirm"',
+    'data-dsh-git="amend-warn-cancel"',
+    "amend.pushedWarn",
+    "amend.pushedOk",
+    "amend.pushedCancel",
+    "origin/main, upstream/main"
+  ]) {
+    if (!amendWarn.includes(needle)) throw new Error(`the pre-amend warning is missing ${JSON.stringify(needle)}`);
+  }
+  if (!amendWarn.includes('aria-pressed="false"')) throw new Error("the warning must not turn the amend mode on by itself");
+  if (amendWarn.includes('data-dsh-git="amend-load"')) throw new Error("the warning must not pre-fill a message before the user confirms");
+
   // Amend and the network toolbar's composite action cannot both apply: the
   // button disables with a localized reason instead of silently committing.
   const blocked = net({ dirty: 2, ahead: 0, upstream: "origin/main", oid: "abc1234", detached: false }, "feat: x", true);
@@ -796,6 +821,11 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   await store.verbs.headMessage("C:/repo");
   last = sent[sent.length - 1];
   if (last.endpoint !== "headMessage") throw new Error(`headMessage verb payload: ${JSON.stringify(last)}`);
+  await store.verbs.amendCheck("C:/repo");
+  last = sent[sent.length - 1];
+  if (last.endpoint !== "amendCheck" || last.payload.args.cwd !== "C:/repo") {
+    throw new Error(`amendCheck verb payload: ${JSON.stringify(last)}`);
+  }
   await store.verbs.commit("C:/repo", "amend: rewrite", true);
   last = sent[sent.length - 1];
   if (last.endpoint !== "commit" || last.payload.args.amend !== true) throw new Error(`amend commit payload: ${JSON.stringify(last)}`);

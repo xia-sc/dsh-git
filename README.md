@@ -57,9 +57,12 @@ DeepSeek Harness Web GUI 的 Git 插件：一个**可折叠的悬浮面板** + �
   （`git restore --staged --worktree`），未跟踪文件/目录直接删除（`git clean -f -d`），打开的差异
   自动收起。冲突文件不显示 `✕`（要在终端解决），且**没有「全部丢弃」**。
 - **修改上次提交**：低频操作，折叠在提交按钮下方的一行浅色小字里（不与「暂存全部」同排，避免
-  误触）；点开后自动预填上次提交信息（不覆盖已有草稿，`↻` 可重读），按钮变为「修改提交」。
-  它复用与普通提交通**完全相同**的消息规范化与 `--cleanup=whitespace`，只多一个 `--amend`。
-  改写已推送过的分支需要 force push，插件不自动做，成功提示里写明；amend 开启时「提交并推送」禁用。
+  误触）。点开时先向宿主确认**上次提交是否已经在远程**（只读查本地远程跟踪引用，不 fetch）。若
+  已推送，面板不会直接进入 amend，而是行内警告并列出远程分支（如 `origin/main`）——改写已发布
+  的提交之后推送必须 force push，多数仓库会拒绝；点「仍然修改」才继续。确认后自动预填上次提交
+  信息（不覆盖已有草稿，`↻` 可重读），按钮变为「修改提交」。它复用与普通提交通**完全相同**的
+  消息规范化与 `--cleanup=whitespace`，只多一个 `--amend`。插件不自动 force push，成功提示里
+  写明；amend 开启时「提交并推送」禁用。
 
 ### 自动刷新
 
@@ -152,6 +155,7 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, binaryPaths, truncated}, index: {…} }`。两侧一次读回；未跟踪用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1）；单侧 40 万字符在行边界截断；二进制按文件判定。**只读**。 |
 | `commit` | `{ cwd, message, amend? }` | `{ message }`；`amend: true` 改走 `git commit --amend --cleanup=whitespace --file=-`（无 HEAD 报 `no-commit`）；缺 author 报 `missing-author`。 |
 | `headMessage` | `{ cwd }` | `{ message }`（`git log -1 --format=%B`，去尾部空行）；仓库无提交时报 `no-commit`。只读。 |
+| `amendCheck` | `{ cwd }` | `{ pushed, refs, upstream }`。`pushed` 由 `git branch -r --contains HEAD` 判定 HEAD 是否已在某个远程跟踪分支上（**只读、不 fetch**）；`refs` 是这些远程 ref（最多 5 个），`upstream` 是当前分支的跟踪上游（可为 null）；无 HEAD 报 `no-commit`。 |
 | `push` | `{ cwd, sessionId? }` | `{ message }`（120s）。有上游走普通 `git push`；无上游自动 `git push --set-upstream <remote> <branch>`（远端顺序 `remote.pushDefault` → `origin` → 唯一 remote；否则 `no-remote`）；游离 HEAD 报 `detached-head`。`sessionId` 是可选的 forge 发现提示，非法/未知静默忽略，**不影响推送结果**。 |
 | `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50）。 |
 | `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`/`unstaged`/`all`（非法 `invalid-mode`）；`sessionId` 可选（>200 字符 `invalid-session`）；`language` 是语言名（>60 字符或形状非法 `invalid-language`，空/`auto` 表示跟随仓库）。失败码：`llm-unavailable`、`no-changes`、`no-provider`、`no-model`、`llm-truncated`、`llm-empty`、`cancelled`、`llm-failed`。 |
@@ -174,7 +178,8 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 - **丢弃不可逆**：只按单条路径、必须二次确认；不做「全部丢弃」；冲突文件拒绝；未跟踪用
   `clean -f -d`（不加 `-x`，ignored 文件不动）。
 - **储藏跟着 git 走**：默认不含未跟踪文件；`pop` 冲突保留条目；不做 `stash drop` / `stash apply`。
-- **amend 会改写历史**：不自动 force push，成功提示写明；amend 时禁用复合动作。
+- **amend 会改写历史**：入口先查 HEAD 是否已推送，已推送则行内二次确认（列出远程分支）后才进入
+  amend 模式；不自动 force push，成功提示写明；amend 时禁用复合动作。
 - **forge 协同时可选**：只调用宿主公开的 `discoverBranch`（只读查询），缺服务/无 provider 静默跳过；
   不伪造工具事件、不写会话日志、不直接写 forge 内部记录。
 - **差异查看是纯只读的**：`diff` 只跑 `git diff` / `git ls-files`，不写 index / 工作区 / 配置；
