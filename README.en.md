@@ -108,6 +108,10 @@ messages are `invalid-message`; the message reaches git on stdin through
 
 ## Design decisions & boundaries
 
+> The complete list, with reasons, lives in [`NON_GOALS.md`](./NON_GOALS.md): **force push**, history
+> rewriting (rebase/reset…), bulk discard, merge commits, automatic fetch/pull/commit/push, and
+> editing git config or credentials are all out of scope.
+
 - **commit does not stage**: it records what is staged; Commit & push is an explicit composite
   (stage all → commit → push). When the push fails the commit has landed and the notice says so.
 - **pull is `--ff-only`**; **a branch without an upstream is pushed with `--set-upstream`** (git's

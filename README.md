@@ -168,6 +168,9 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 
 ## 设计决策与边界
 
+> 完整清单与理由见 [`NON_GOALS.md`](./NON_GOALS.md)：**force push**、rebase/reset 等历史改写、
+> 全部丢弃、合并提交、自动 fetch/pull/commit/push、写 git config 与凭据管理都不在范围内。
+
 - **commit 不暂存**：只提交已暂存内容；想全提交用「暂存全部」。顶栏「提交并推送」是显式复合
   动作，不改变提交本身的语义；推送失败时提交已落地，提示会明确说明。
 - **pull 恒 `--ff-only`**：不产生意外的合并提交。
