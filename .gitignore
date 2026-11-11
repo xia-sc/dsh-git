@@ -5,3 +5,6 @@ dist/
 .DS_Store
 .acl-report/
 .audit/
+# 兼容性审计笔记只留本地，不提交（日后新的也自动忽略）
+AUDIT-*.md
+COMPAT.md

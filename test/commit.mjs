@@ -138,6 +138,50 @@ try {
     const res = await call("commit", { cwd: repo, message: "nothing staged" });
     check("clean tree reports commit-failed", res.ok !== true && pluginCode(res) === "commit-failed", JSON.stringify(res));
   }
+
+  // ── amend rewrites HEAD through the same message path ─────────────────────
+  // The panel pre-fills HEAD's message into the composer, so the endpoint only
+  // has to take that message and rewrite the commit: same count, new oid, and
+  // whatever is staged (including a file staged after the original commit) is
+  // folded into the replacement.
+  {
+    const beforeCount = (await git(repo, ["rev-list", "--count", "HEAD"])).trim();
+    const beforeSha = (await git(repo, ["rev-parse", "HEAD"])).trim();
+    await stageOne("amended.txt");
+    const res = await call("commit", { cwd: repo, message: "feat: amended subject\n\nNew body.", amend: true });
+    check("amend succeeds", res.ok === true, JSON.stringify(res));
+    check("amend keeps the commit count", (await git(repo, ["rev-list", "--count", "HEAD"])).trim() === beforeCount);
+    const afterSha = (await git(repo, ["rev-parse", "HEAD"])).trim();
+    check("amend replaces the commit", afterSha !== beforeSha, `${beforeSha} -> ${afterSha}`);
+    check("amend records the given message", (await headMessage()) === "feat: amended subject\n\nNew body.");
+    const tree = await git(repo, ["ls-tree", "--name-only", "HEAD"]);
+    check("amend folds in the newly staged file", tree.includes("amended.txt"), tree.trim());
+  }
+  {
+    const res = await call("commit", { cwd: repo, message: "  ", amend: true });
+    check("amend rejects an empty message", res.ok !== true && pluginCode(res) === "invalid-message", JSON.stringify(res));
+  }
+  // An unborn branch has nothing to rewrite: the panel disables the switch when
+  // `headMessage` answers no-commit, and the commit path must agree.
+  {
+    const emptyRepo = await mkdtemp(join(tmpdir(), "dsh-git-amend-empty-"));
+    try {
+      await git(emptyRepo, ["init", "--quiet"]);
+      await git(emptyRepo, ["config", "user.name", "dsh-git test"]);
+      await git(emptyRepo, ["config", "user.email", "dsh-git@example.invalid"]);
+      const res = await call("commit", { cwd: emptyRepo, message: "no commit", amend: true });
+      check("amend without HEAD reports no-commit", res.ok !== true && pluginCode(res) === "no-commit", JSON.stringify(res));
+      const head = await call("headMessage", { cwd: emptyRepo });
+      check("headMessage without HEAD reports no-commit", head.ok !== true && pluginCode(head) === "no-commit", JSON.stringify(head));
+    } finally {
+      await rm(emptyRepo, { recursive: true, force: true });
+    }
+  }
+  // headMessage returns the message git recorded, byte for byte.
+  {
+    const head = await call("headMessage", { cwd: repo });
+    check("headMessage returns the last message", head.ok === true && head.value.message === "feat: amended subject\n\nNew body.", JSON.stringify(head));
+  }
 } finally {
   await rm(repo, { recursive: true, force: true });
 }

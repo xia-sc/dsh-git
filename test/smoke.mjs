@@ -175,7 +175,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid cwd (rejected before any git spawn) for every endpoint
 {
-  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "diff", "commit", "push", "log", "generateMessage"];
+  const endpoints = ["status", "branches", "checkout", "createBranch", "fetch", "pull", "stage", "stash", "stashPop", "discard", "headMessage", "diff", "commit", "push", "log", "generateMessage"];
   for (const ep of endpoints) {
     const res = await call(ep, { cwd: "relative/path" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-cwd") {
@@ -392,6 +392,59 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   }
 }
 
+// stash rejects a message that is not one line, and stashPop accepts ONLY the
+// exact stash@{N} ref the status list produces: `git stash pop` resolves any
+// revision, so an option-looking or revision-looking argument must never reach it.
+{
+  const evilMessages = ["a\nb", "a\r\nb", "a\u0000b", "a\u007fb", "x".repeat(201), 42, {}];
+  for (const message of evilMessages) {
+    const res = await call("stash", { cwd: ABS_CWD, message });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-message") {
+      throw new Error(`stash message not rejected: ${JSON.stringify(message)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  // A one-line message and a missing one both dispatch to git; the sandbox may
+  // refuse the spawn, but the answer is never a validation code.
+  for (const message of ["WIP on main", undefined, null, ""]) {
+    const res = await call("stash", { cwd: NO_REPO_CWD, message });
+    if (pluginCode(res) === "invalid-message" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`a usable stash message must dispatch: ${JSON.stringify(message)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  const evilRefs = ["", "stash", "stash@{0}~1", "stash@{0}^2", "stash@{-1}", "stash@{abc}", "-x", 42, null, {}];
+  for (const ref of evilRefs) {
+    const res = await call("stashPop", { cwd: ABS_CWD, ref });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-ref") {
+      throw new Error(`evil stash ref not rejected: ${JSON.stringify(ref)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  for (const ref of ["stash@{0}", "stash@{12}"]) {
+    const res = await call("stashPop", { cwd: NO_REPO_CWD, ref });
+    if (pluginCode(res) === "invalid-ref" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`a valid stash ref must dispatch: ${JSON.stringify(ref)} -> ${JSON.stringify(res)}`);
+    }
+  }
+}
+
+// discard validates both pathspecs before spawning git, exactly like diff.
+{
+  const evil = ["", "  ", 42, null, undefined, {}, "-flag", "--output=/x", "/etc/passwd", "C:/Windows/win.ini", "../outside.txt", "a/../../b", "./a", "a\u0000b", "a\nb", "x".repeat(4100)];
+  for (const path of evil) {
+    const res = await call("discard", { cwd: ABS_CWD, path });
+    if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-path") {
+      throw new Error(`evil discard path not rejected: ${JSON.stringify(path)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  const badOrig = await call("discard", { cwd: ABS_CWD, path: "src/a.js", origPath: "../x" });
+  if (badOrig.ok || pluginCode(badOrig) !== "invalid-path") {
+    throw new Error(`evil discard origPath not rejected: ${JSON.stringify(badOrig)}`);
+  }
+  const dispatched = await call("discard", { cwd: NO_REPO_CWD, path: "src/a.js" });
+  if (pluginCode(dispatched) === "invalid-path" || pluginCode(dispatched) === "invalid-cwd") {
+    throw new Error(`a valid discard path must dispatch to git: ${JSON.stringify(dispatched)}`);
+  }
+}
+
 // push decides its git arguments without spawning git. The interesting case is
 // the one that used to fail in the panel: a branch with no upstream (every
 // freshly created branch) must be pushed with --set-upstream, otherwise git
@@ -404,10 +457,14 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   if (!same(first.args, ["push", "--set-upstream", "origin", "antdv-next-migration"])) {
     throw new Error(`an untracked branch must set its upstream: ${JSON.stringify(first)}`);
   }
+  // The plan also reports the remote IT chose, so the optional forge discovery
+  // does not have to re-derive it; a plain push names none (git config decides).
+  if (first.remote !== "origin") throw new Error(`the plan must report its chosen remote: ${JSON.stringify(first)}`);
   const tracked = pushPlan({ branch: "main", hasUpstream: true, remotes: ["origin"], pushDefault: null });
   if (!same(tracked.args, ["push"])) {
     throw new Error(`a tracked branch must keep plain git push: ${JSON.stringify(tracked)}`);
   }
+  if (tracked.remote !== undefined) throw new Error(`a plain push must not invent a remote: ${JSON.stringify(tracked)}`);
   // Branch names come from git and may be Unicode (a Chinese branch name is
   // ordinary); the plan must pass the name through untouched.
   const unicodeBranch = pushPlan({ branch: "功能/迁移", hasUpstream: false, remotes: ["origin"], pushDefault: null });
@@ -419,6 +476,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   if (!same(viaDefault.args, ["push", "--set-upstream", "b", "b1"])) {
     throw new Error(`remote.pushDefault must win: ${JSON.stringify(viaDefault)}`);
   }
+  if (viaDefault.remote !== "b") throw new Error(`the plan must report the pushDefault remote: ${JSON.stringify(viaDefault)}`);
   // A configured default that no longer exists (or is not a plain remote name)
   // falls through to origin instead of producing an unusable argument.
   for (const pushDefault of ["gone", "--upload-pack=evil", "", null, undefined]) {
@@ -441,6 +499,18 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   for (const branch of [null, undefined, ""]) {
     const res = pushPlan({ branch, hasUpstream: false, remotes: ["origin"], pushDefault: null });
     if (res.code !== "detached-head") throw new Error(`detached HEAD must be refused: ${JSON.stringify(res)}`);
+  }
+}
+
+// push's optional sessionId is only a hint for the host's optional forge
+// discovery: an unusable value must be IGNORED, never reject the push (the
+// panel always sends a real id, but a caller or an older client may not).
+{
+  for (const sessionId of ["x".repeat(201), 42, {}, "", ["s1"]]) {
+    const res = await call("push", { cwd: NO_REPO_CWD, sessionId });
+    if (pluginCode(res) === "invalid-session" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`an unusable push sessionId must be ignored, not refused: ${JSON.stringify(sessionId)} -> ${JSON.stringify(res)}`);
+    }
   }
 }
 

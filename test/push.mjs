@@ -47,10 +47,30 @@ function git(cwd, args) {
 
 // ── mount the plugin's route, capturing the handler ──────────────────────────
 let route = null;
+/**
+ * The optional host services the push endpoint may use for forge discovery.
+ * They are off by default, exactly like an older host that has no
+ * forge-session, and swapped in per case below.
+ */
+let optionalServicesEnabled = false;
+const forgeCalls = [];
+const forgeSession = {
+  discoverBranch(session, remote, branch) {
+    forgeCalls.push({ session, remote, branch });
+    return Promise.resolve();
+  }
+};
+let sessionsById = new Map();
 const ctx = {
   effect(fn) { return fn(); },
-  get(name) { return name === "connection" ? { requestRejection: () => undefined } : undefined; },
-  llm: { listProviders: () => [], listModels: async () => [], stream: async function* () {} },
+  get(name) {
+    if (name === "connection") return { requestRejection: () => undefined };
+    if (name === "llm") return optionalServicesEnabled ? { listProviders: () => [], listModels: async () => [], stream: async function* () {} } : undefined;
+    if (!optionalServicesEnabled) return undefined;
+    if (name === "sessions") return { get(id) { return sessionsById.get(id); } };
+    if (name === "forgeSession") return forgeSession;
+    return undefined;
+  },
   webServer: { register(candidate) { route = candidate; return () => { route = null; }; } }
 };
 apply(ctx);
@@ -197,6 +217,72 @@ try {
     check("pushDefault push records that upstream", (await branchOn(work)) === "b/work");
     check("the other remote stays untouched", (await remoteBranches(a)) === "");
   }
+  // ── forge-session discovery: a panel push is not a shell tool call ────────
+  // dsh 0.2.2's forge-session only reads `git push` output from bash/pwsh tool
+  // events, so the host asks its optional `forgeSession.discoverBranch(...)`
+  // service after a successful push. Every missing piece must stay silent.
+  {
+    const dir = await fixture();
+    const origin = await bareRepo(dir, "origin");
+    const work = await workRepo(dir);
+    await git(work, ["remote", "add", "origin", origin]);
+    optionalServicesEnabled = true;
+    sessionsById = new Map([["s1", { id: "s1", header: { cwd: work } }]]);
+    forgeCalls.length = 0;
+
+    const res = await call("push", { cwd: work, sessionId: "s1" });
+    check("push with a session succeeds", res.ok === true, JSON.stringify(res));
+    check("a successful push reports the branch to forge-session", forgeCalls.length === 1, JSON.stringify(forgeCalls));
+    const reported = forgeCalls[0];
+    check("forge-session receives the remote URL", reported !== undefined && reported.remote === origin, JSON.stringify(reported));
+    check("forge-session receives the pushed branch", reported !== undefined && reported.branch === "work", JSON.stringify(reported));
+    check("forge-session receives the live session object", reported !== undefined && reported.session !== undefined && reported.session.id === "s1", JSON.stringify(reported));
+
+    // A tracking branch may publish a DIFFERENT remote branch name
+    // (`branch.<name>.merge`); that name is what forge-session must look up.
+    await git(work, ["update-ref", "refs/remotes/origin/remote-work", (await headOf(work))]);
+    await git(work, ["config", "branch.work.merge", "refs/heads/remote-work"]);
+    await git(work, ["config", "push.default", "upstream"]);
+    forgeCalls.length = 0;
+    const merged = await call("push", { cwd: work, sessionId: "s1" });
+    check("a tracking branch pushes its merge ref", merged.ok === true, JSON.stringify(merged));
+    check("forge-session receives the remote branch name", forgeCalls[0] !== undefined && forgeCalls[0].branch === "remote-work", JSON.stringify(forgeCalls));
+    await git(work, ["config", "branch.work.merge", "refs/heads/work"]);
+    await git(work, ["config", "--unset", "push.default"]);
+
+    // Every unusable or missing piece is silent and never changes the push result.
+    forgeCalls.length = 0;
+    const noSession = await call("push", { cwd: work });
+    const unknownSession = await call("push", { cwd: work, sessionId: "missing" });
+    const longSession = await call("push", { cwd: work, sessionId: "x".repeat(201) });
+    const nonStringSession = await call("push", { cwd: work, sessionId: 42 });
+    sessionsById = new Map([["s2", { id: "s2", header: { cwd: join(dir, "elsewhere") } }]]);
+    const otherWorkspace = await call("push", { cwd: work, sessionId: "s2" });
+    for (const [label, result] of [
+      ["without a session", noSession],
+      ["with an unknown session", unknownSession],
+      ["with an unusable session id", longSession],
+      ["with a non-string session id", nonStringSession],
+      ["from another workspace", otherWorkspace]
+    ]) {
+      check(`push ${label} still succeeds`, result.ok === true, JSON.stringify(result));
+    }
+    check("no unusable session triggers a discovery", forgeCalls.length === 0, JSON.stringify(forgeCalls));
+
+    // An older host has no forge-session service at all.
+    optionalServicesEnabled = false;
+    const noForge = await call("push", { cwd: work, sessionId: "s1" });
+    check("push succeeds without a forge-session service", noForge.ok === true, JSON.stringify(noForge));
+    optionalServicesEnabled = true;
+    sessionsById = new Map([["s1", { id: "s1", header: { cwd: work } }]]);
+
+    // A failed push reports nothing to forge-session.
+    forgeCalls.length = 0;
+    await git(work, ["remote", "set-url", "origin", join(dir, "missing.git")]);
+    const failed = await call("push", { cwd: work, sessionId: "s1" });
+    check("a failed push reports push-failed", failed.ok !== true && pluginCode(failed) === "push-failed", JSON.stringify(failed));
+    check("a failed push triggers no discovery", forgeCalls.length === 0, JSON.stringify(forgeCalls));
+  }
 } finally {
   for (const dir of fixtures) await rm(dir, { recursive: true, force: true });
 }
@@ -205,4 +291,4 @@ if (failures > 0) {
   console.error(`\n${failures} PUSH TEST(S) FAILED`);
   process.exit(1);
 }
-console.log("PUSH END-TO-END TESTS PASSED (upstream setup, tracked push, detached HEAD, remote selection)");
+console.log("PUSH END-TO-END TESTS PASSED (upstream setup, tracked push, detached HEAD, remote selection, forge-session discovery hints)");

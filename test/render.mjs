@@ -99,7 +99,8 @@ let statusValue = {
   ahead: 1,
   behind: 0,
   dirty: 2,
-  changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }]
+  changes: [{ status: "modified", path: "src/a.js" }, { status: "untracked", path: "b.txt" }],
+  stashes: [{ ref: "stash@{0}", subject: "On main: WIP on main" }]
 };
 
 const ctx = {
@@ -401,8 +402,10 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     t: commonProps.t,
     language: "auto",
     customText: "",
+    autoRefresh: true,
     onLanguage: () => {},
     onCustomText: () => {},
+    onAutoRefresh: () => {},
     onClose: () => {}
   }));
   for (const needle of ['data-dsh-git="settings-popover"', 'data-dsh-git="settings-language"', 'data-dsh-git="settings-close"', "settings.language.hint"]) {
@@ -418,8 +421,10 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     t: commonProps.t,
     language: customId,
     customText: "Esperanto",
+    autoRefresh: true,
     onLanguage: () => {},
     onCustomText: () => {},
+    onAutoRefresh: () => {},
     onClose: () => {}
   }));
   if (!customPopover.includes('data-dsh-git="settings-language-text"')) throw new Error("the custom entry must reveal the text field");
@@ -481,6 +486,313 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (reopened.includes('data-dsh-git="settings-popover"')) throw new Error("a reopened panel must not show a stale popover");
 
   console.log("settings: header entry, popover inside the panel, custom field, and the forced language reaching the endpoint");
+}
+
+// ── automatic refresh ───────────────────────────────────────────────────────
+// The panel used to read only on demand (↻, a completed action, a session
+// switch), so a file changed in an editor or a commit made in a terminal stayed
+// invisible. The intervals, the back-off and the "did anything change?" logic
+// must not be asserted by waiting real seconds, so they are pure functions or
+// run through injectable timers here; the real clicks live in
+// test/ui/verify-auto-refresh.mjs.
+{
+  const {
+    autoRefreshDelay,
+    createAutoRefresher,
+    frameSignature,
+    diffValueSignature,
+    readStoredAutoRefresh,
+    settingsView: settingsComponent,
+    AUTO_REFRESH_PANEL_MS: panelMs,
+    AUTO_REFRESH_IDLE_MS: idleMs,
+    AUTO_REFRESH_STORAGE_KEY: autoKey
+  } = mod.__internals;
+
+  for (const fn of [autoRefreshDelay, createAutoRefresher, frameSignature, diffValueSignature, readStoredAutoRefresh]) {
+    if (typeof fn !== "function") throw new Error(`the auto-refresh surface must be exported for the render test: ${fn}`);
+  }
+  if (panelMs !== 4000 || idleMs !== 15000) throw new Error(`unexpected auto-refresh intervals: ${panelMs}/${idleMs}`);
+  if (autoKey !== "dsh-git.autoRefresh") throw new Error(`unexpected auto-refresh storage key: ${autoKey}`);
+  // No storage in this Node render: the default has to be ON, not undefined.
+  if (readStoredAutoRefresh() !== true) throw new Error("without storage, auto refresh must default on");
+
+  // ── the interval decision ────────────────────────────────────────────────
+  const off = { enabled: false, cwd: "C:/repo", hidden: false, busy: null, panelOpen: true, failures: 0, lastDurationMs: 0 };
+  if (autoRefreshDelay(off) !== null) throw new Error("the switch off must stop scheduling");
+  if (autoRefreshDelay({ ...off, enabled: true, cwd: null }) !== null) throw new Error("no workspace must stop scheduling");
+  if (autoRefreshDelay({ ...off, enabled: true, hidden: true }) !== null) throw new Error("a hidden page must stop scheduling");
+  const openDelay = autoRefreshDelay({ ...off, enabled: true });
+  const closedDelay = autoRefreshDelay({ ...off, enabled: true, panelOpen: false });
+  if (openDelay !== 4000 || closedDelay !== 15000) throw new Error(`unexpected intervals: open=${openDelay} closed=${closedDelay}`);
+  const busyDelay = autoRefreshDelay({ ...off, enabled: true, busy: "push", panelOpen: false });
+  if (!(busyDelay !== null && busyDelay <= 2000)) throw new Error(`an action in flight must only pause briefly: ${busyDelay}`);
+  if (autoRefreshDelay({ ...off, enabled: true, lastDurationMs: 5000 }) !== 20000) throw new Error("a slow status must widen the interval fourfold");
+  const backoff1 = autoRefreshDelay({ ...off, enabled: true, failures: 1 });
+  const backoff3 = autoRefreshDelay({ ...off, enabled: true, failures: 3 });
+  if (!(backoff1 > openDelay && backoff3 > backoff1 && backoff3 <= 60000)) {
+    throw new Error(`back-off must grow and then cap: ${backoff1} -> ${backoff3}`);
+  }
+
+  // ── data signatures: UI state must never trigger a re-render ─────────────
+  const base = store.getSnapshot();
+  if (frameSignature(base) !== frameSignature({ ...base, panelOpen: !base.panelOpen, refreshing: !base.refreshing, autoRefresh: false })) {
+    throw new Error("UI state must stay out of the data signature");
+  }
+  if (frameSignature(base) === frameSignature({ ...base, dirty: base.dirty + 1 })) throw new Error("data must move the signature");
+  const diffFixture = {
+    repo: true, path: "src/a.js", origPath: null, untracked: false, skipped: 0,
+    worktree: { diff: "+x", binary: false, truncated: false },
+    index: { diff: "", binary: false, truncated: false }
+  };
+  if (diffValueSignature(diffFixture) !== diffValueSignature({ ...diffFixture })) throw new Error("the same patch must keep the same signature");
+  if (diffValueSignature(diffFixture) === diffValueSignature({ ...diffFixture, worktree: { diff: "+y", binary: false, truncated: false } })) {
+    throw new Error("new patch bytes must move the diff signature");
+  }
+
+  // ── the scheduler, on a fake clock ───────────────────────────────────────
+  let nowMs = 0;
+  const queue = [];
+  const timers = {
+    setTimeout(fn, ms) {
+      const handle = { fn, at: nowMs + ms };
+      queue.push(handle);
+      return handle;
+    },
+    clearTimeout(handle) {
+      const index = queue.indexOf(handle);
+      if (index >= 0) queue.splice(index, 1);
+    }
+  };
+  const pollerState = { enabled: true, cwd: "C:/repo", hidden: false, busy: null, panelOpen: true };
+  let polls = 0;
+  let nextPoll = { ok: true };
+  const refresher = createAutoRefresher({
+    getState: () => pollerState,
+    pollOnce: () => { polls += 1; nowMs += 5; return Promise.resolve(nextPoll); },
+    timers,
+    now: () => nowMs,
+    hidden: () => pollerState.hidden === true,
+    doc: null
+  });
+  const settle = async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); };
+  // `fire` plays the fake clock's part: advance to the armed instant, drop the
+  // handle (a real timer would be gone), then run it.
+  const fire = () => {
+    const handle = queue.shift();
+    if (handle === undefined) throw new Error("no timer was armed");
+    nowMs = Math.max(nowMs, handle.at);
+    handle.fn();
+  };
+
+  const dispose = refresher.start();
+  if (queue.length !== 1 || queue[0].at !== 4000) throw new Error(`start must arm one timer at the panel interval: ${JSON.stringify(queue)}`);
+  fire();
+  await settle();
+  if (polls !== 1) throw new Error(`the timer must poll, got ${polls}`);
+  if (queue.length !== 1 || queue[0].at - nowMs < 4000) throw new Error("the poller must re-arm at the panel interval");
+
+  // A hidden page pauses completely; coming back reads at once.
+  pollerState.hidden = true;
+  fire();
+  await settle();
+  if (polls !== 1 || queue.length !== 0) throw new Error(`a hidden page must neither poll nor schedule: polls=${polls} queue=${queue.length}`);
+  pollerState.hidden = false;
+  refresher.wake();
+  await settle();
+  if (polls !== 2) throw new Error(`wake must read immediately, got ${polls}`);
+
+  // Failures back off (a host restart answers 405 for a while).
+  nextPoll = { ok: false };
+  fire();
+  await settle();
+  fire();
+  await settle();
+  if (refresher.getStats().failures !== 2) throw new Error(`failures must accumulate: ${JSON.stringify(refresher.getStats())}`);
+  const backedOff = queue[0].at - nowMs;
+  if (!(backedOff > 4000)) throw new Error(`a failing host must back off, got ${backedOff}`);
+  nextPoll = { ok: true };
+  fire();
+  await settle();
+  if (refresher.getStats().failures !== 0) throw new Error("a success must clear the failure count");
+  dispose();
+  if (queue.length !== 0 || refresher.getStats().running !== false) throw new Error("dispose must stop the timer");
+
+  // ── the switch ───────────────────────────────────────────────────────────
+  if (store.getSnapshot().autoRefresh !== true) throw new Error("auto refresh must default on in the store");
+  store.setAutoRefresh(false);
+  if (store.getSnapshot().autoRefresh !== false) throw new Error("the switch must publish on the shared state");
+  store.setAutoRefresh(true);
+  if (store.getSnapshot().autoRefresh !== true) throw new Error("the switch must turn back on");
+
+  const autoOffView = renderToStaticMarkup(React.createElement(settingsComponent, {
+    t: commonProps.t, language: "auto", customText: "", autoRefresh: false,
+    onLanguage: () => {}, onCustomText: () => {}, onAutoRefresh: () => {}, onClose: () => {}
+  }));
+  for (const needle of ['data-dsh-git="settings-auto-refresh"', 'aria-pressed="false"', "settings.autoRefresh.hint", "settings.autoRefresh.off"]) {
+    if (!autoOffView.includes(needle)) throw new Error(`the switched-off popover must show ${JSON.stringify(needle)}`);
+  }
+  const autoOnView = renderToStaticMarkup(React.createElement(settingsComponent, {
+    t: commonProps.t, language: "auto", customText: "", autoRefresh: true,
+    onLanguage: () => {}, onCustomText: () => {}, onAutoRefresh: () => {}, onClose: () => {}
+  }));
+  if (!autoOnView.includes('aria-pressed="true"') || !autoOnView.includes("settings.autoRefresh.on")) {
+    throw new Error("the on state must be visible in the popover");
+  }
+  // Both seats share the same state: the pill shows the same dirty count the
+  // panel does, and neither owns the switch.
+  if (typeof store.startAutoRefresh !== "function" || typeof store.setAutoRefresh !== "function") {
+    throw new Error("the store must expose the auto-refresh face used by apply()");
+  }
+
+  console.log("auto refresh: intervals, back-off, data signatures, scheduler on a fake clock, switch + popover row");
+}
+
+// ── stash / discard / amend ────────────────────────────────────────────────
+// The three "take it back" actions. Their decisions are pure, or they live in
+// component state that SSR cannot click (the pending discard, the amend switch),
+// so every one is asserted through its exported helper; the rendered workbench
+// only proves the controls exist and the order of the body.
+{
+  const {
+    stashDraft,
+    stashable,
+    discardIntent,
+    discardConfirmView,
+    amendView,
+    networkPrimary: net,
+    sectionView: sections
+  } = mod.__internals;
+  for (const fn of [stashDraft, stashable, discardIntent, discardConfirmView, amendView]) {
+    if (typeof fn !== "function") throw new Error("the stash/discard/amend helpers must be exported for the render test");
+  }
+
+  // Default stash message: git-style wording, never the composer's draft.
+  if (stashDraft({ branch: "main" }).message !== "WIP on main") throw new Error("stashDraft must name the branch");
+  if (stashDraft({ branch: null }).message !== "WIP") throw new Error("stashDraft must survive a detached HEAD");
+  if (stashDraft(null).message !== "WIP") throw new Error("stashDraft must survive an empty snapshot");
+
+  // git stash push (without -u) only stores TRACKED changes: an untracked-only
+  // tree must disable the button instead of failing after the click.
+  if (stashable({ changes: [{ status: "modified" }] }) !== true) throw new Error("a tracked change is stashable");
+  if (stashable({ changes: [{ status: "untracked" }] }) !== false) throw new Error("an untracked-only tree is not stashable");
+  if (stashable({ changes: [] }) !== false) throw new Error("a clean tree is not stashable");
+  if (stashable(null) !== false) throw new Error("an empty snapshot is not stashable");
+
+  // Discard intent: untracked → clean, conflict → refused, everything else →
+  // restore. The host makes the same call again from its own status read.
+  if (discardIntent({ status: "untracked" }).clean !== true) throw new Error("untracked paths discard by clean");
+  if (discardIntent({ status: "conflict" }).refuse !== true) throw new Error("conflicted paths are refused");
+  const trackedIntent = discardIntent({ status: "modified" });
+  if (trackedIntent.clean === true || trackedIntent.refuse === true) throw new Error("tracked paths discard by restore");
+
+  // The confirmation strip says DELETE for an untracked path and RESTORE
+  // otherwise, carries both buttons, and disables them while busy.
+  const trackedConfirm = renderToStaticMarkup(discardConfirmView({
+    path: "src/a.js", clean: false, busy: false, onApply: () => {}, onCancel: () => {}
+  }, commonProps.t));
+  for (const needle of ['data-dsh-git="discard-confirm"', 'data-dsh-git="discard-apply"', 'data-dsh-git="discard-cancel"', "discard.confirm", "discard.apply", "discard.cancel"]) {
+    if (!trackedConfirm.includes(needle)) throw new Error(`the discard strip is missing ${JSON.stringify(needle)}`);
+  }
+  if (trackedConfirm.includes("discard.confirmUntracked")) throw new Error("a tracked path must not be worded as a deletion");
+  const untrackedConfirm = renderToStaticMarkup(discardConfirmView({
+    path: "b.txt", clean: true, busy: false, onApply: () => {}, onCancel: () => {}
+  }, commonProps.t));
+  if (!untrackedConfirm.includes("discard.confirmUntracked")) throw new Error("an untracked path must be worded as a deletion");
+  const busyConfirm = renderToStaticMarkup(discardConfirmView({
+    path: "b.txt", clean: true, busy: true, onApply: () => {}, onCancel: () => {}
+  }, commonProps.t));
+  if (!/data-dsh-git="discard-apply"[^>]*disabled/.test(busyConfirm)) throw new Error("a busy panel must disable the discard button");
+
+  // The amend row: off by default, and while on it explains itself and offers
+  // the "load the last message" button; a failed read shows the reason inline.
+  const amendOff = renderToStaticMarkup(amendView({
+    on: false, loading: false, error: null, onToggle: () => {}, onLoad: () => {}
+  }, commonProps.t));
+  if (!amendOff.includes('data-dsh-git="amend-toggle"') || !amendOff.includes('aria-pressed="false"')) throw new Error("the amend toggle must start off");
+  if (amendOff.includes('data-dsh-git="amend-load"') || amendOff.includes("amend.hint")) throw new Error("the amend row must stay compact while off");
+  const amendOn = renderToStaticMarkup(amendView({
+    on: true, loading: false, error: null, onToggle: () => {}, onLoad: () => {}
+  }, commonProps.t));
+  for (const needle of ['aria-pressed="true"', 'data-dsh-git="amend-load"', "amend.hint"]) {
+    if (!amendOn.includes(needle)) throw new Error(`the amend row is missing ${JSON.stringify(needle)}`);
+  }
+  const amendNoCommit = renderToStaticMarkup(amendView({
+    on: true, loading: false, error: "amend.noCommit", onToggle: () => {}, onLoad: () => {}
+  }, commonProps.t));
+  if (!amendNoCommit.includes("amend.noCommit") || amendNoCommit.includes("amend.hint")) {
+    throw new Error("an amend read failure must replace the hint with its reason");
+  }
+
+  // Amend and the network toolbar's composite action cannot both apply: the
+  // button disables with a localized reason instead of silently committing.
+  const blocked = net({ dirty: 2, ahead: 0, upstream: "origin/main", oid: "abc1234", detached: false }, "feat: x", true);
+  if (blocked.action !== null || blocked.reason !== "amend.conflict") throw new Error(`amend must disable commit-and-push: ${JSON.stringify(blocked)}`);
+  if (net({ dirty: 2, ahead: 0, upstream: "origin/main", oid: "abc1234", detached: false }, "feat: x").action !== "commitPush") {
+    throw new Error("the two-argument call must keep its old behaviour");
+  }
+
+  // The rendered workbench carries the three controls; the stash card starts
+  // folded, so its rows only appear once expanded (driven through sectionView).
+  await store.refresh("C:/repo");
+  store.setPanelOpen(true);
+  const html = renderToStaticMarkup(React.createElement(bySlot["shell.overlay"].comp, commonProps));
+  for (const needle of [
+    'data-dsh-git="stash-header"',
+    'data-dsh-git="stash-push"',
+    'data-dsh-git="stash"',
+    'data-dsh-git="amend"',
+    'data-dsh-git="amend-toggle"',
+    'data-dsh-git="change-discard"'
+  ]) {
+    if (!html.includes(needle)) throw new Error(`the panel is missing ${JSON.stringify(needle)}`);
+  }
+  if (html.includes('data-dsh-git="stash-body"')) throw new Error("the stash card must start folded");
+  if (html.split('data-dsh-git="change-discard"').length - 1 !== 2) {
+    throw new Error("every non-conflicted change row needs a discard control");
+  }
+  const stashSection = renderToStaticMarkup(sections({
+    hook: "stash",
+    label: "stash.title",
+    count: 1,
+    open: true,
+    all: true,
+    cap: 3,
+    empty: "stash.empty",
+    rows: [React.createElement("button", { key: "pop", "data-dsh-git": "stash-pop" }, "pop")],
+    onToggle: () => {},
+    onMore: () => {},
+    actions: [React.createElement("button", { key: "push", "data-dsh-git": "stash-push" }, "push")]
+  }, commonProps.t));
+  for (const needle of ['data-dsh-git="stash-head"', 'data-dsh-git="stash-push"', 'data-dsh-git="stash-pop"']) {
+    if (!stashSection.includes(needle)) throw new Error(`an expanded stash card is missing ${JSON.stringify(needle)}`);
+  }
+
+  // Verbs and wire payloads: amend travels as `amend: true`, a plain commit does
+  // not grow the field, and the four new endpoints carry exactly their args.
+  await store.verbs.stash("C:/repo", "WIP on main", false);
+  let last = sent[sent.length - 1];
+  if (last.endpoint !== "stash" || last.payload.args.message !== "WIP on main" || last.payload.args.includeUntracked !== false) {
+    throw new Error(`stash verb payload: ${JSON.stringify(last)}`);
+  }
+  await store.verbs.stashPop("C:/repo", "stash@{0}");
+  last = sent[sent.length - 1];
+  if (last.endpoint !== "stashPop" || last.payload.args.ref !== "stash@{0}") throw new Error(`stashPop verb payload: ${JSON.stringify(last)}`);
+  await store.verbs.discard("C:/repo", "src/a.js", null);
+  last = sent[sent.length - 1];
+  if (last.endpoint !== "discard" || last.payload.args.path !== "src/a.js" || last.payload.args.origPath !== null) {
+    throw new Error(`discard verb payload: ${JSON.stringify(last)}`);
+  }
+  await store.verbs.headMessage("C:/repo");
+  last = sent[sent.length - 1];
+  if (last.endpoint !== "headMessage") throw new Error(`headMessage verb payload: ${JSON.stringify(last)}`);
+  await store.verbs.commit("C:/repo", "amend: rewrite", true);
+  last = sent[sent.length - 1];
+  if (last.endpoint !== "commit" || last.payload.args.amend !== true) throw new Error(`amend commit payload: ${JSON.stringify(last)}`);
+  await store.verbs.commit("C:/repo", "plain commit");
+  last = sent[sent.length - 1];
+  if ("amend" in last.payload.args) throw new Error("a plain commit must not send the amend field");
+
+  console.log("stash/discard/amend: pure decisions, confirmation strip, amend row, panel controls and wire payloads");
 }
 
 // The store's act() resolves with the raw result and localizes a coded failure.
@@ -563,6 +875,25 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   if (collapsed.includes("Powered by")) throw new Error(`a collapsed card must hide git's output: ${collapsed}`);
   console.log("operation card:", JSON.stringify(collapsed.slice(0, 240)));
   console.log("operation output:", JSON.stringify(pushResult.detail.slice(0, 48)), "/ stage summary is one localized line");
+}
+
+// The push verb forwards an optional Session id. The panel supplies it so the
+// host can ask the optional forge-session service to discover the branch's open
+// change request (a panel push is not a shell tool call, which is the only thing
+// forge-session's projection watches). The field stays absent when there is no
+// Session: an older host must not receive a half-filled hint.
+{
+  await store.verbs.push("C:/repo", "s1");
+  let lastPush = sent[sent.length - 1];
+  if (lastPush.endpoint !== "push" || lastPush.payload.args.sessionId !== "s1") {
+    throw new Error(`the push must carry the session id: ${JSON.stringify(lastPush)}`);
+  }
+  await store.verbs.push("C:/repo");
+  lastPush = sent[sent.length - 1];
+  if ("sessionId" in lastPush.payload.args) {
+    throw new Error(`a push without a session must omit the field: ${JSON.stringify(lastPush)}`);
+  }
+  console.log("push: session id forwarded only when one is given");
 }
 
 // Every change row is a control, because the change list is the diff viewer's
@@ -663,6 +994,7 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     "action.generate",
     "commit.placeholder",
     'data-dsh-git="changes-header"',
+    'data-dsh-git="stash-header"',
     'data-dsh-git="log-header"'
   ];
   let previous = -1;
@@ -883,7 +1215,7 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
     t: commonProps.t,
     cwd: "C:/repo",
     change: { file: "src/a.js", origFile: null, status: "modified", path: "src/a.js" },
-    dataVersion: "v1",
+    changeVersion: "v1",
     onClose: () => {}
   }));
   for (const needle of ['data-dsh-git="diff"', 'data-dsh-git="diff-header"', 'data-dsh-git="diff-body"', 'data-dsh-git="diff-close"', "diff.scope.worktree", "diff.scope.index", "diff.loading", "src/a.js"]) {

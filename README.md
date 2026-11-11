@@ -2,185 +2,99 @@
 
 [English](./README.en.md) | 中文
 
-DeepSeek Harness Web GUI 的完整 Git 管理插件，形态为一个**可折叠的悬浮面板**，
-**实时跟随当前会话的工作区**——在侧边栏点击不同的会话/工作区，面板会瞬间
-重新绑定到对应仓库。
+DeepSeek Harness Web GUI 的 Git 插件：一个**可折叠的悬浮面板** + 输入框旁的**状态胶囊**，
+**实时跟随当前会话的工作区**——在侧边栏切换会话，面板与胶囊会立即重绑到对应仓库。
 
-**支持的工作流：** 分支切换 · 拉取更新(fetch) · 拉取合并(pull，仅快进) ·
-暂存全部 · 提交(commit，可用 AI 起草提交信息) · 推送(push) ·
-**一键提交并推送** · 状态(status) · 最近提交 · 未提交文件列表 ·
-**点击变更看差异** · 基于某分支新建分支。
+**工作流：** 分支切换 · fetch · pull（仅快进） · 暂存全部 · 提交（可 AI 起草提交信息） ·
+推送 · 一键提交并推送 · 储藏 / 恢复 · 丢弃单条改动 · 修改上次提交 · 点击变更看差异 ·
+从任意基分支新建分支。
 
 ## 界面
 
-- **悬浮面板**（`shell.overlay`）：折叠时不渲染任何元素（不会遮挡输入框）；
-  展开后自上而下是一条工作流：状态行（未提交计数、领先/落后、上游）→
-  带 **脏树预检** 的分支切换器（有未提交修改时选择分支，会先显示受影响文件列表
-  警告而不是直接切换，并提供"仍要切换"按钮）。远端分支在列表里显示**完整远程引用**
-  （`origin/main`、`upstream/main`）而不是光秃秃的分支名——多个 remote 常有同名分支，
-  只显示短名的话两个选项都叫 `main`，根本分不出是哪一个。选一个远端分支会新建同名
-  本地分支并跟踪它；若这个名字的本地分支已经存在（无论它跟踪的是另一个 remote 还是
-  什么都没跟踪），git 不允许两个同名分支，插件**不会偷偷切到游离 HEAD、也不会改掉
-  已有分支的 upstream**，而是明确报错并让你用"＋ 新建分支"以该远端引用为起点另建一个
-  名字不同的分支 → **网络工具条**（拉取更新 / 拉取合并 /
-  **提交并推送**，三等宽；"提交并推送"是主按钮：先暂存全部、再用输入框里的信息提交、
-  最后推送）→ **提交卡片**（"暂存全部" + AI 生成依据 +
-  "✨ AI 生成"三等宽，下面是提交信息输入框（多行文本框，回车换行、Ctrl/Cmd+Enter
-  提交）与提交按钮）→ 两张列表卡片。按钮一律**等宽分栏**，不再是一排宽窄不一的按钮。
-  **操作反馈固定钉在面板最上边，而且只有一行**——"推送中…"和上次操作的结果都在
-  body 的第一行；结果是一个中文短句（"已推送"／"已提交并推送"／"已暂存全部"／"已切换到 xxx"），git 自己的输出
-  （push 的 sideband banner、`LF will be replaced by CRLF` 这类提示）收在右侧的"详情 ▾"里，点开才展开，
-  不会被变更列表和最近提交顶到看不见的地方。面板**可通过顶栏拖动**（按住带 Git 标题的
-  那一行，拖到哪里就停在哪里，不会拖出视口；顶栏上的按钮/输入框不会触发
-  拖动；双击顶栏回到居中位置）。顶栏右侧依次是 **⚙ 设置**（提交信息语言，
-  见下文「提交区与 AI 起草」）、**↻ 刷新**、**– 收起**。
-  分支切换器旁边的"＋ 新建分支"按钮会展开一个内联表单：新分支名 + 基分支
-  选择器（本地分支或 `origin/feature/x` 这样的完整远端引用）——确认后从
-  该基分支创建新分支并切换过去。
-- **变更 / 最近提交两张卡片**：变更列表每行是「等宽路径 + 状态色标签」（路径在左，
-  所以一列路径对得齐；修改=橙、新增·未跟踪=绿、删除·冲突=红、重命名=蓝，
-  当前正在看的那一行整行高亮）；最近提交每行是「短 sha + 主题」。两张卡片的标题行
-  （`▾ 变更 12`）点一下整段收起/展开，**默认展开**——面板不该把用户自己的改动藏起来；
-  列表超过 8 / 5 行时底部出现「显示全部 N 项」，与折叠是两件事，所以箭头永远指对方向。
-- **刷新不闪**：点 ↻ 或任何操作之后的重读都**保留面板内容**（同一个工作区不会退回
-  一行 "读取中…" 再弹回来），只在标题栏把刷新按钮置灰并写着"刷新中…"。
-- **点击变更看差异**：点变更列表里的任意一行，面板会从 400px 的单栏展开成
-  两栏——左边照旧是完整工作台，右边是该文件的 unified diff（见下文
-  「差异查看」）。再点同一行、或点差异标题栏的 `×`，就收回单栏。
-- **输入框胶囊**（`conversation.input.dock`）：输入框左上角的紧凑型左对齐
-  状态胶囊（分支摘要，或"当前工作区不是 Git 仓库"）；点击它展开/收起悬浮面板。
-- 两处界面共享同一个 store，状态永远一致，并都会随当前会话（及其 cwd）
-  切换而重新绑定。切换工作区会清空已选中的文件——绝不让面板显示别的仓库的内容。
-- **git 的文字输出会剥掉 ANSI 颜色码**：远端会给自己的 banner 上色（gitee 的
-  `Powered by GITEE.COM` 就是），面板是 DOM 不是终端，ESC 没有字形可渲染，
-  不剥就只剩 `[0[01;33m` 这类参数当正文显示。只剥"消息"文本（`message`），
-  **diff 内容与文件名一律逐字节保真**。
+### 悬浮面板与胶囊
+
+- **胶囊**（`conversation.input.dock`）常驻输入框左上角，显示分支、脏计数、领先/落后；
+  点击展开/收起面板。
+- **面板**（`shell.overlay`）折叠时不渲染任何元素（不遮挡输入框），展开后自上而下是一条工作流：
+  状态行 → 分支切换器（带脏树预检）→ 网络工具条 → 提交卡片 → 变更卡片 → 储藏卡片 →
+  最近提交。面板可拖动（双击顶栏复位），折叠/展开不影响输入。
+- **分支切换**：有未提交改动时先给出警告和受影响文件，可「仍要切换」；远端分支显示**完整远程
+  引用**（`origin/main`、`upstream/main`），避免多个 remote 同名分支分不清。选远端引用会新建
+  同名跟踪分支；同名本地分支已存在时明确报错（HEAD 不动，也不会偷偷 detach）。
+- **新建分支**：输入名称 + 选择基分支（本地或完整远端引用），创建并切换过去。
+- **两张列表卡片**：变更行 = 等宽路径 + 状态色标签，点击行打开右侧 diff；最近提交 = 短 sha +
+  主题。标题行点击折叠/展开，默认展开；超过预览行数时底部提供「显示全部 N 项」。
 
 ### 差异查看
 
-点变更列表里的一行，就在右侧显示该文件的 git diff。左侧列表是它的导航：
-行高亮表示"正在看这一个"，首次点击会自动把变更列表展开成完整列表。
-
-- **可拖拽调宽**：拖动**面板最右侧那条边**即改差异栏宽度——左栏（工作台）宽度不变，
-  面板整体变宽、差异栏跟着长；双击这条边复位。面板始终留在视口内，窗口变窄时
-  会自动收回；拖动时面板会就地锚定左边缘，所以指针与这条边是 1:1 跟手的。
-- **打开差异时尺寸是稳定的**：一选中文件，面板就定好了高度（两栏都铺到面板底部），
-  diff 读回来、切文件、来回点收起都只在栏内滚动，面板本身不会跟着内容跳一下。
-- **未暂存 / 已暂存**：默认自动跟随数据——未暂存有内容就显示未暂存，否则显示
-  已暂存；顶部两个 chip 可手动切换，空的一侧置灰。同一个文件两边都有改动时，
-  一次点击看到的是最关心的那一侧，另一侧一键可达。
-- **自动刷新**：暂存、提交、切分支、刷新之后，打开的差异会自己重读——未暂存
-  变空时会自动落到已暂存。
-- **行号与配色**：左右两列行号（旧/新）取自每个 hunk 头，`+`/`-` 行走主题的
-  成功/错误色，hunk 头单独一行，`\ No newline at end of file` 灰显。
-- **边界都有明确提示**：这一侧没有改动 / 二进制文件没有文本差异（混在未跟踪
-  目录里的二进制文件会按文件名列出，同一目录里的文本改动照常显示）/ 差异过大
-  只显示开头一段 / 未跟踪目录里还有 N 个文件未展开 / 读取失败。大差异不再一次
-  性塞进 DOM：不换行时按固定行高做**虚拟滚动**（只渲染可视区与上下少量预读），
-  换行（行高不定）时用「再显示 N 行」分页追加。
-- **未跟踪文件**：与空文件对比，显示成 `new file mode` 的新增 diff；未跟踪
-  **目录**会把里面的文件逐个展开（上限 50 个，其余计入提示）。
-- **重命名**：同时把旧名与新名作为 pathspec 交给 git，否则 git 无法配对，会把
-  一次重命名报成整文件新增。
+- 点变更行，面板从单栏变两栏（左工作台 / 右 unified diff）；再点同一行或 `×` 收回。
+- **拖面板右边缘**调 diff 宽度（双击复位）；两栏使用固定高度，diff 异步读回时面板不会跳。
+- 未暂存 / 已暂存两侧可切换；空的一侧置灰。默认跟随数据：未暂存有内容看未暂存，否则看已暂存。
+- 大 diff 用虚拟滚动（不换行按固定行高，换行改为「再显示 N 行」分页）；行号、`+/-` 配色、
+  hunk 头、`\ No newline at end of file` 都有对应渲染；二进制按文件判定并列出被隐藏的文件名。
+- 只读：diff 端点只跑 `git diff` / `git ls-files`，不写 index、不动工作区。
 
 ### 提交区与 AI 起草
 
-提交区按真实操作顺序排列：**暂存全部 → AI 生成 → 提交**。
+- **暂存全部**（`git add --all`）、AI 起草依据（已暂存 / 未暂存 / 全部）、**✨ AI 生成**三等宽。
+- 提交信息是多行输入框（回车换行，Ctrl/Cmd+Enter 提交）；**提交**只提交已暂存内容，从不隐式
+  暂存；**提交并推送**是显式复合动作（暂存全部 → 提交 → 推送）。
+- **✨ AI 生成**把选中的改动交给当前会话所选模型，生成结果只填入输入框，不自动提交；模型路由取
+  当前会话的 `modelSelection` 投影，请求带 `sessionId` 供需要会话亲和的网关使用。
+- **提交信息语言（⚙）**：默认「自动」（跟随仓库），也可强制简体中文/繁體中文/English/日本語/
+  한국어/Français/Deutsch/Español/Русский 或自定义语言名；选择存在浏览器 `localStorage`
+  （`dsh-git.commitLanguage`），对所有工作区生效。
+- **操作反馈**固定在 body 第一行、只有一行：本地化短句 + git 原文收在「详情 ▾」里。失败时短句是
+  诊断开头，全文仍在详情里。
 
-顶部的**「提交并推送」**是同一套流程的一键版：暂存全部 → 用输入框里的信息提交 → 推送。
-下方的「提交」按钮保持原语义——**只提交已暂存内容，不隐式暂存**。推送失败时提交已经落地，
-通知会明确写「已提交，但推送失败」。
+### 储藏 / 丢弃 / 修改上次提交
 
-**只差推送时，这个按钮就是「推送」**：一次失败的推送（网络断开、远端拒绝）会让提交已经落地、
-工作区变干净，而提交信息框已被清空——这曾让按钮永久置灰，唯一的出路是去终端重试，而胶囊还挂着
-「↑1」。现在第三个网络按钮按状态切换：**有改动 + 有提交信息** → 「提交并推送」；否则只要还有
-未推送的提交（`ahead > 0`，或分支尚无上游但本地已有提交）→ 「推送」，直接重推已有提交，不暂存
-也不提交；两者都不成立时置灰，并用提示说明原因（无改动 / 需要提交信息）。另外**任何操作失败后
-也会重读状态**，所以「已提交，但推送失败」的卡片还在，按钮却能按真实的 `ahead` 立刻再推一次。
+- **储藏**：底部「储藏」卡片（默认折叠，标题带计数）列出 `stash@{N}` 与 git 的 subject；
+  「＋ 储藏」把已跟踪改动存成一条带 `WIP on <branch>` 消息的储藏；每行「恢复」执行
+  `git stash pop` 并删除该条。**未跟踪文件默认不进储藏**（git 自己的行为）；恢复冲突时 git 保留
+  条目、冲突留在工作区，面板会说明；工作区会挡住恢复时提示先处理当前改动。
+- **丢弃单条改动**：变更行末尾的 `✕` 先弹出**行内确认**（不可撤销）；确认后已跟踪文件回到 HEAD
+  （`git restore --staged --worktree`），未跟踪文件/目录直接删除（`git clean -f -d`），打开的差异
+  自动收起。冲突文件不显示 `✕`（要在终端解决），且**没有「全部丢弃」**。
+- **修改上次提交**：提交卡片里的「修改上次提交」开关打开后，自动预填上次提交信息（不覆盖已有
+  草稿，`↻` 可重读），按钮变为「修改提交」。它复用与普通提交通**完全相同**的消息规范化与
+  `--cleanup=whitespace`，只多一个 `--amend`。改写已推送过的分支需要 force push，插件不自动做，
+  成功提示里写明；amend 开启时「提交并推送」禁用。
 
-**分支还没有上游时，推送会自动建立跟踪**：`git push` 在分支没有 upstream 时会直接失败
-（`fatal: The current branch … has no upstream branch`），而这正是新建分支后第一次推送的状态。
-插件改为按 git 自己报错里的建议执行 `git push --set-upstream <remote> <branch>`：创建远端分支
-并记录 `branch.<name>.remote` / `.merge`（由 git 写入，插件不手改配置）。远端按
-`remote.pushDefault` → `origin` → 唯一 remote 的顺序选择；多个 remote 且都不是 `origin` 时
-报 `no-remote` 而不是猜一个（把分支推到错误仓库比一条可读的错误更糟）。
+### 自动刷新
 
-- **暂存全部**：`git add --all`（含删除与未跟踪文件）。工作区干净时置灰。
-  这是"只有未暂存改动、点提交却报错"的正解——提交本身依然**不会**隐式暂存。
-- **AI 生成依据**：三选一，决定把哪一部分改动交给模型：
-  `已暂存`（默认）、`未暂存`、`全部`。默认 `已暂存`，因为**只有它是本次
-  提交真正会记录的内容**——用其他依据生成的描述可能与实际提交不符。
-- **✨ AI 生成**：把选中的改动（diffstat + diff，截断后）交给当前会话所选
-  模型，生成的提交信息直接填入输入框；不满意可改，也可以直接手写。
-- **提交信息语言（顶栏 ⚙ 设置）**：默认「自动」——让模型跟随仓库现有提交与
-  注释的语言（历史行为）。选中某个语言（简体中文 / 繁體中文 / English / 日本語 /
-  한국어 / Français / Deutsch / Español / Русский）或「自定义…」手填一个语言名后，
-  生成时会在 system prompt 里**强制**整条提交信息（主题 + 正文）只用该语言，
-  并明确写清它覆盖代码注释、历史提交与 diff 的语言——仓库注释是英文时，
-  「自动」会被它们带跑，这正是这个开关要解决的问题。设置存在浏览器的
-  `localStorage`（键 `dsh-git.commitLanguage`），对所有工作区生效、刷新后保留；
-  存储不可用时静默回落到「自动」。自定义语言名由宿主按形状与长度（≤ 60 字符、
-  无换行/引号/冒号等可自开规则的字符）校验，非法时报 `invalid-language`。
+默认开启：面板打开时每 4 秒、收起后每 15 秒只读轮询一次仓库状态。在编辑器里改文件、在终端里
+提交/切分支/fetch 都会自己出现在面板与胶囊上，不再只靠 ↻。
 
-生成用的模型路由取当前会话的 `modelSelection` 投影（待生效的选择优先，
-其次是上次实际使用），取不到时回落到宿主注册的第一条路由。请求会带上**当前会话 id**
-（`sessionId`），因为部分网关（例如本机配置的 opencode 系路由）要求会话亲和头，
-而宿主只在请求带 `sessionId` 时才把它转给适配器——不带就会被网关以
-`MissingSessionID` 拒掉。失败会以本地化文案显示在"上次操作输出"里
-（无可用改动 / 未配置模型 / 生成失败等；未知失败码先给本地化短句，再附宿主的原始诊断）。
+- 轮询只调 `status`（外加必要的 `branches`/`log`），**绝不自动 fetch/pull/push/commit**。
+- 数据签名不变时不重绘，不打断正在输入或拖拽；页面切到后台时暂停、切回立即读一次。
+- 宿主暂时不可用时指数退避，不把已有界面打成错误页；打开的 diff 静默跟随文件内容重读
+  （不闪 loading、不跳滚动）。
+- 可在 ⚙ 里关闭（存 `localStorage`，键 `dsh-git.autoRefresh`）；节奏固定，不提供间隔自定义。
 
-## 架构
+### forge 协同（dsh ≥ 0.2.2）
 
-一个双面 npm 包：
+官方 forge-session 只从 `bash`/`pwsh` 工具里的 `git push`/`gh pr create` 输出推断分支与 PR；
+面板推送走的是插件自己的 `/dsh-git-rpc/push`，不是 shell 调用。因此推送成功后插件会调用宿主
+可选的 `forgeSession.discoverBranch(session, remoteUrl, branch)`，让 Forge 面板与会话摘要发现该
+分支的 open PR（来源记为 `discovered`）。
 
-| 半边 | 文件 | 职责 |
-| --- | --- | --- |
-| 宿主 | `lib/index.js` | Cordis 插件（bundle 行 `dsh-git`），在自己的 `ctx.webServer` 上注册 `/dsh-git-rpc` 前缀路由，收发浏览器 `connection.rpc.call` 的同一套 Connection RPC 信封，并复用 connection 服务的 Host/Origin + 浏览器会话围栏（`connection.requestRejection`）。端点：`status`、`branches`、`checkout`、`createBranch`、`fetch`、`pull`、`stage`、`diff`、`commit`、`push`、`log`、`generateMessage`。所有 git 调用都走 `execFile`（无 shell）、带超时（本地 30s / 网络 120s）、严格入参校验。AI 生成是可选的：`llm` **不在 `inject` 里**（硬依赖会让整行在宿主没起 `llm` 时永远 PENDING、路由不注册），每次调用按 `ctx.get("llm")` 读取，缺失时 `status.generate` 为 `false`、`generateMessage` 报 `llm-unavailable`。 |
-| 浏览器 | `lib/client.js` | `dsh.client` bundle（服务于 `/plugins/@xia-sc/dsh-git/client.js`）：悬浮面板 + dock 行 + 共享 store，对照模块表手写（仅依赖 `react`）。 |
-
-### 为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）
-
-dsh 0.1.5-rc.1 起，外部插件不能再调用 `ctx.connection.rpc.handle()`：
-`HostConnectionService.rpc` 闭包持有的是 **connection 插件自己的 Context**（`inject`
-只有 `["credentials"]`），注册时执行
-`owner.effect(() => owner.webServer.register(route))`，而该插件只在内部的
-`ctx.inject(["webServer"], …)` 作用域里取得到 `webServer`。于是无论调用方 inject 了
-什么，这一行都会以 `cannot get property "webServer" without inject` 挂载失败
-（0.3.0 正是如此，插件在 0.1.5-rc.1 上装不起来）。本插件因此改为自己注册
-`/dsh-git-rpc` 路由、自己实现同一套 RPC 信封；请求围栏仍交给 connection 服务的
-`requestRejection`，安全等级与 `/api` 完全一致。`test/host-mount.mjs` 在真实 Cordis +
-真实 Connection 服务上守护这一点。
-
-### 会话绑定由会话座位提供（dsh ≥ 0.1.6-alpha.2）
-
-两个界面此前都从 sessions 列表快照里读 `current`（当前会话 id）。0.1.6-alpha.2 把这个
-字段去掉了——列表快照只剩 `ids` / `byId` / `phase` / `subagentsByParent` /
-`jobsBySession`，当前会话改由渲染器的作用域适配器（`SlotScopeAdapter.current`，由
-`retainedBy.mainView` 推出）投递给**会话作用域**的座位，根作用域的 `shell.overlay`
-读不到它（症状是胶囊和面板一起静默消失，没有任何报错）。
-
-现在：**胶囊**（`conversation.input.dock`，会话作用域，框架直接给出 `sessionId`）
-从 `useSessions` 快照里取该会话的 `cwd`，调用 `store.bindSession(sessionId, cwd)`；
-**面板**只读共享 store 的 `sessionId` / `cwd`（它另外用 `sessionId` 取
-`modelSelection` 投影来定 AI 起草的路由）。`byId[id].retainedBy.mainView` 用来排除
-右栏里的嵌入式会话（子会话 chat），快照不带这个计数时按主视图放行。
+旧宿主、未启用 forge、未配置 provider、本地 remote 或没有当前会话 id 时，这一步静默跳过，
+推送行为完全不变。插件**不伪造 shell 工具事件**（那会写进模型可见的会话历史），也不直接写
+forge 的内部记录。
 
 ## 安装
 
 ```sh
+# npm（推荐）
 dsh plugin --profile web add @xia-sc/dsh-git
-```
 
-也可以直接从源码装（两个渠道同源，npm 上的版本就是对应 tag 的产物）：
-
-```sh
+# 或直接从源码安装（两个渠道同源）
 dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
-然后**重启 `dsh web`**（bundle 行与浏览器 roster 在启动时组合）。刷新后，
-当前会话工作区是 git 仓库时，输入框上方会出现 dock 胶囊，点击即可展开面板。
-
-要求 **dsh ≥ 0.1.5-rc.1**（宿主半自持 `/dsh-git-rpc` 路由，见上文架构说明）。
+然后**重启 `dsh web`**（bundle 行与浏览器 roster 在启动时组合）。要求 **dsh ≥ 0.1.5-rc.1**
+（forge 协同需要 0.2.2+ 且宿主启用 forge）。
 
 卸载：
 
@@ -188,128 +102,103 @@ dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 dsh plugin --profile web remove @xia-sc/dsh-git
 ```
 
+## 架构
+
+一个双面 npm 包：
+
+| 半边 | 文件 | 职责 |
+| --- | --- | --- |
+| 宿主 | `lib/index.js` | Cordis 插件行 `dsh-git`，自持 `/dsh-git-rpc` 前缀路由，收发与 `/api` 相同的 Connection RPC 信封，并复用 connection 的 Host/Origin + 会话 Cookie 围栏。所有 git 调用走 `execFile`（无 shell），本地 30s / 网络 120s 超时，严格入参校验。 |
+| 浏览器 | `lib/client.js` | `dsh.client` bundle（手写、无构建步骤，仅依赖 `react`）：悬浮面板、胶囊、共享 store、diff 渲染。 |
+
+- **为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）**：该版本起外部插件调用 `ctx.connection.rpc.handle()`
+  会因 connection 插件自身的 Context 缺 `webServer` 而挂载失败。本插件改为自己注册路由、自己
+  收发同一套信封；围栏仍交给 `connection.requestRejection`，安全等级与 `/api` 一致。
+- **会话绑定由会话座位提供（dsh ≥ 0.1.6-alpha.2）**：会话列表快照不再带 `current`，当前会话改由
+  渲染器的会话作用域适配器投递。胶囊（会话作用域）读 `useSessions` 取 cwd 并
+  `store.bindSession(sessionId, cwd)`；面板（根作用域）只读共享 store，不自己找当前会话。
+- **可选能力全部走反射读取**：`llm`、`forgeSession`、`sessions` 都经 `ctx.get(name)` 按需读取，
+  **不进 `inject`**——硬依赖会让整行在宿主没起对应服务时一直 PENDING、路由不注册。
+
 ## RPC 约定（`/dsh-git-rpc`）
 
-浏览器侧通过 `ctx.connection.rpc.call("/dsh-git-rpc", endpoint, { args })` 调用；宿主侧
-是本插件自持的 `/dsh-git-rpc/*` 前缀路由，收发与 `/api` 相同的 Connection 信封：
+浏览器侧通过 `ctx.connection.rpc.call("/dsh-git-rpc", endpoint, { args })` 调用；宿主侧是本插件
+自持的前缀路由，收发与 `/api` 相同的 Connection 信封：
 
 - 请求：`POST /dsh-git-rpc/<endpoint>`，`content-type: application/json`，
   `{ type: "client-request", rpcId, method: <endpoint>, payload: { args } }`
 - 响应：`{ type: "server-response", rpcId, result: { ok: true, value } | { ok: false, error } }`
-- 围栏：`connection.requestRejection`（Host/Origin + 浏览器会话 Cookie）；非 `POST` → 405，
+- 围栏：`connection.requestRejection`（Host/Origin + 浏览器会话 Cookie）；非 POST → 405，
   非 JSON → 415，请求体超限 → 413，路径不属于本通道 → 404。
 
-载荷使用 `{ args }` 约定。`cwd` 必须是绝对路径；`branch` 匹配
-`^[A-Za-z0-9][A-Za-z0-9._/-]*$`（不允许前导 `-`、`..`、`@{`、`\`、空白、
-控制字符）。提交信息是真正的提交信息：一行主题 +
-可选的多行正文。CRLF 会归一为 LF，逐行去掉行尾空白，去掉首尾空行并把连续
-空行折叠为一行（因此主题与正文之间那一行空行会保留）；空、超长（>10000
-字符）、含控制字符的信息报 `invalid-message`。信息经 stdin 以
-`git commit --cleanup=whitespace --file=-` 传入，因此空格、引号、换行、shell
-元字符、前导 `-` 都会被原样记录。
+入参约定：`cwd` 必须绝对路径；`branch` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`；`path` 是仓库内相对
+路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白）。提交信息按真正的提交信息处理：CRLF→LF、
+逐行去行尾空白、去首尾空行、连续空行折叠；空/超长（>10000）/含控制字符报 `invalid-message`；
+经 stdin 以 `git commit --cleanup=whitespace --file=-` 传入，因此空格、引号、换行、shell 元字符、
+前导 `-` 都会原样记录。
 
-| 端点 | 参数 | 结果（`value`） |
+| 端点 | 参数 | 结果 / 说明 |
 | --- | --- | --- |
-| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, generate, changes: [{status, path, index, worktree, file, origFile}] }`。`path` 是展示串（重命名读作 `old → new`），`file`/`origFile` 是交给 `diff` 的 pathspec，`index`/`worktree` 是 porcelain-v2 的两个字母；`generate` 表示宿主是否提供可选的 `llm` 服务（供面板决定是否禁用「✨ AI 生成」）。 |
-| `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{remote, branch, name, short}] }`。远程项同时给出**完整远程跟踪 ref**（`name`，如 `origin/main`）与分支部分（`branch`/`short`，如 `main`）：多个 remote 常有同名分支，只给短名在界面上分辨不出（`origin/main` 与 `upstream/main` 都显示成 `main`）。每个 remote 的 `HEAD` 符号引用（`refs/remotes/<remote>/HEAD`）会被过滤掉——它不是能切换的分支。 |
-| `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`。`branch` 是本地分支名时走 `git switch --guess`；是远程跟踪 ref（`origin/main`）时新建同名本地跟踪分支并切换过去（`git switch --track`）。若同名本地分支已存在——无论它跟踪的是**另一个** remote 还是什么都没跟踪——则报 `checkout-remote-conflict` 并**保持 HEAD 不动**（不 `--detach`、不改已有分支的 upstream），因为 git 不允许两个同名分支；改用 `createBranch` 以该 ref 为起点另建一个名字不同的分支。若**本地**恰好有一个分支本身就叫 `origin/main`，该本地分支优先（与 git 自己的 DWIM 一致，否则它在面板里就再也点不到了）。浏览器会预检脏树并提前警告；因"本地修改会被覆盖"被拒绝时会带上可读前缀。 |
-| `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }`，经 `git switch --create <branch> <base>`（缺省 base 即 HEAD）；从基分支创建新分支并切换过去。 |
-| `fetch` | `{ cwd }` | `{ message }`（120s 超时；`git fetch` 本身没有 remote 参数——面板也没有 remote 选择，多 remote 仓库按 git 自己的 `branch.<name>.remote` 行为） |
-| `pull` | `{ cwd }` | `{ message }`，经 `git pull --ff-only`（绝不隐式合并） |
-| `stage` | `{ cwd }` | `{ message }`，经 `git add --all` |
-| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, binaryPaths, truncated}, index: {…} }`。两侧一次读回（`git diff [--cached] --no-ext-diff --no-color -- <path> [<origPath>]`）；`path` 必须是仓库内相对路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白），非法时报 `invalid-path`。未跟踪路径用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1），未跟踪目录用 `git ls-files --others --exclude-standard` 展开（上限 50 个，其余计入 `skipped`）。单侧超过 40 万字符在行边界截断并置 `truncated`。**二进制按文件判定**（在任何截断之前）：整侧只有二进制时 `binary: true`；混有文本时 `binary: false` 并用 `binaryPaths` 列出被隐藏的文件名，文本 hunk 照常发送。**只读**，不碰 index / 工作区 / 配置。 |
-| `commit` | `{ cwd, message }` | `{ message }`；未配置 `user.name/email` 时报 `missing-author` 错误 |
-| `push` | `{ cwd }` | `{ message }`（120s 超时）。分支有上游时走普通 `git push`；**没有上游时自动 `git push --set-upstream <remote> <branch>`**（远端顺序 `remote.pushDefault` → `origin` → 唯一 remote），所以新建的分支可以一次推上去并开始跟踪。没有 remote、或多个 remote 且都没有 `origin` 时报 `no-remote`（附 `details.remotes`）；游离 HEAD 报 `detached-head`。 |
-| `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50） |
-| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`（默认）/`unstaged`/`all`，非法值报 `invalid-mode`；`sessionId` 为可选的非空字符串（超过 200 字符报 `invalid-session`），面板会带上当前会话 id 供需要会话亲和的网关路由。`language` 是可选的**语言名**（顶栏 ⚙ 里的设置；缺失、`null`、空串与 `auto` 都表示「跟随仓库」），它会被写进 system prompt 强制整条信息只用该语言；形状或长度不合法（> 60 字符、含换行/引号/冒号等）报 `invalid-language`。失败码见 `error.details.code`：`llm-unavailable`（宿主没有提供 `llm` 服务；插件仍然挂载，只是禁用起草按钮）、`no-changes`、`no-provider`、`no-model`、`llm-truncated`（输出上限用尽、一个字都没写出来）、`llm-empty`、`cancelled`、`llm-failed`。 |
+| `status` | `{ cwd }` | `{ repo, branch, detached, oid, upstream, ahead, behind, dirty, generate, stashes: [{ref, subject}], changes: [{status, path, index, worktree, file, origFile}] }`。`path` 是展示串（重命名 `old → new`），`file`/`origFile` 是 pathspec；`generate` 表示宿主是否提供 `llm`；`stashes` 随同一次读取返回（最多 50 条）。 |
+| `branches` | `{ cwd }` | `{ repo, current, local: [{name, current, upstream, sha}], remote: [{remote, branch, name, short}] }`。远端项给完整跟踪 ref（`name`）与分支部分；每个 remote 的 `HEAD` 符号引用会被过滤。 |
+| `checkout` | `{ cwd, branch }` | `{ branch, detached, oid, message? }`。本地名走 `git switch --guess`；远端跟踪 ref 新建跟踪分支并切换；同名本地分支已存在时 `checkout-remote-conflict` 且 HEAD 不动。 |
+| `createBranch` | `{ cwd, branch, base? }` | `{ branch, detached, oid, message? }`，经 `git switch --create <branch> <base>`（缺省 base=HEAD）。 |
+| `fetch` | `{ cwd }` | `{ message }`（120s；`git fetch` 没有 remote 参数）。 |
+| `pull` | `{ cwd }` | `{ message }`，恒 `git pull --ff-only`。 |
+| `stage` | `{ cwd }` | `{ message }`，经 `git add --all`。 |
+| `stash` | `{ cwd, message?, includeUntracked? }` | `{ message }`。消息单行（≤200 字符、无控制字符/换行）；缺失/空让 git 写 `WIP on <branch>`；`includeUntracked: true` 才加 `-u`；没有可储藏的已跟踪改动时 git 退出 0，插件改报 `no-changes`。 |
+| `stashPop` | `{ cwd, ref }` | `{ message }`。`ref` 只接受 `stash@{N}`（`invalid-ref`）；冲突时冲突留在工作区、条目保留（`stash-conflict`）；工作区会被覆盖时 git 中止（`stash-blocked`）；不存在的条目 `stash-missing`。 |
+| `discard` | `{ cwd, path, origPath? }` | `{ message }`。宿主自己读该路径的 porcelain-v2 状态（`-z`）：冲突→`discard-conflict` 拒绝；未跟踪→`git clean -f -d`（不加 `-x`）；暂存新增→先 `restore --staged` 再 clean；其余→`git restore --staged --worktree`（重命名带双 pathspec）。无改动报 `no-changes`。 |
+| `diff` | `{ cwd, path, origPath? }` | `{ repo, path, origPath, untracked, skipped, worktree: {diff, binary, binaryPaths, truncated}, index: {…} }`。两侧一次读回；未跟踪用 `git diff --no-index -- /dev/null <path>`（容忍退出码 1）；单侧 40 万字符在行边界截断；二进制按文件判定。**只读**。 |
+| `commit` | `{ cwd, message, amend? }` | `{ message }`；`amend: true` 改走 `git commit --amend --cleanup=whitespace --file=-`（无 HEAD 报 `no-commit`）；缺 author 报 `missing-author`。 |
+| `headMessage` | `{ cwd }` | `{ message }`（`git log -1 --format=%B`，去尾部空行）；仓库无提交时报 `no-commit`。只读。 |
+| `push` | `{ cwd, sessionId? }` | `{ message }`（120s）。有上游走普通 `git push`；无上游自动 `git push --set-upstream <remote> <branch>`（远端顺序 `remote.pushDefault` → `origin` → 唯一 remote；否则 `no-remote`）；游离 HEAD 报 `detached-head`。`sessionId` 是可选的 forge 发现提示，非法/未知静默忽略，**不影响推送结果**。 |
+| `log` | `{ cwd, count? }` | `{ repo, commits: [{sha, author, subject, refs}] }`（钳制 1..50）。 |
+| `generateMessage` | `{ cwd, mode?, provider?, model?, sessionId?, language? }` | `{ message, mode, provider, model }`。`mode` 为 `staged`/`unstaged`/`all`（非法 `invalid-mode`）；`sessionId` 可选（>200 字符 `invalid-session`）；`language` 是语言名（>60 字符或形状非法 `invalid-language`，空/`auto` 表示跟随仓库）。失败码：`llm-unavailable`、`no-changes`、`no-provider`、`no-model`、`llm-truncated`、`llm-empty`、`cancelled`、`llm-failed`。 |
 
-> 失败结果的 `error.code` 在线路上固定为 `"internal"`（Connection 信封只要求它是字符串），
-> 插件自己的诊断码放在 `error.details.code`；客户端按该码做本地化文案。
+> **错误码约定**：线上 `error.code` 恒为 `"internal"`（Connection 信封要求它是字符串），插件自己的
+> 诊断码放在 `error.details.code`，客户端按该码做本地化。
 >
-> `fetch`/`pull`/`push`/`stage`/`commit` 的 `message` 就是 **git 自己的输出**（已剥掉 ANSI 颜色码）：
-> git 什么都没说时是空串，界面用 `output.<action>` 的中文短句做通知、把这段原文放进可展开的"详情"。
+> `fetch`/`pull`/`push`/`stage`/`commit`/`stash` 的 `message` 就是 git 自己的输出（已剥 ANSI 颜色
+> 码）：git 什么都没说时是空串，界面用 `output.<action>` 短句做通知，原文放进可展开的「详情」。
 
 ## 设计决策与边界
 
-- **pull 固定 `--ff-only`**：不产生意外的合并提交；冲突以错误形式呈现，
-  由用户在自己的工具里解决。
-- **commit 不暂存**：只提交已暂存的内容。想一次提交全部改动，用提交区的
-  "暂存全部"按钮（`git add --all`），而不是让提交隐式暂存。
-  顶部的「提交并推送」是显式声明的复合动作（暂存全部 → 提交 → 推送），
-  不改变「提交」本身的语义。
-- **AI 生成会把改动的 diff 发给你配置的模型提供方**——可能是第三方网关。
-  这是显式点击"✨ AI 生成"才会发生的联网行为；插件本身不联网。diff 截断到
-  12000 字符后发送，且不发送任何仓库外的内容。输出上限 8192 token：思考型
-  模型的 reasoning 与正文共用同一份 completion 预算，上限太小会"一个字都没
-  写就超限"，此时报 `llm-truncated` 而不是含糊的 `llm-empty`。
-- **push 在无上游时自动建立跟踪**：这是 git 自己在报错里给出的建议
-  （`git push --set-upstream <remote> <branch>`），不是为了绕开配置检查——
-  它创建远端分支，并由 git 记录 `branch.<name>.remote` / `.merge`。插件
-  「绝不修改 git config」的边界不变：`user.name/email` 这类设置仍然从不代写，
-  跟踪关系是 git 自己 push 的结果。
-- **push/pull 凭据**来自系统（Git Credential Manager / SSH agent）；插件
-  绝不碰凭据存储。AI 生成同样不接触凭据——API key 由模型适配器自己解析。
-- **插件绝不修改 git config**；缺 author 时给出明确错误而不是悄悄补写。
-- **差异查看是纯只读的**：`diff` 端点只跑 `git diff` / `git ls-files`，不写
-  index、不动工作区、不改配置；它**不依赖**宿主右侧 Sidebar 那套标签页 API
-  （那部分还在快速迭代），而是面板内自带两栏——左侧工作台照旧，右侧差异栏。
-  差异渲染也是自己写的（本 bundle 只依赖 `react`）：解析统一 diff、双行号、
-  `+`/`-` 配色，不引任何语法高亮依赖。
-- **重命名必须同时传旧名与新名**：git 只在旧名也在 pathspec 里时才配对，只给
-  新名会把一次重命名报成整文件新增（`test/diff.mjs` 守护这一点）。
-- **status 的 porcelain-v2 解析**：`2`（rename/copy）记录的路径在第 10 个字段、
-  与旧名以 TAB 分隔，`u`（冲突）记录的路径在第 11 个字段且状态恒为冲突——这
-  两处曾按 `slice(8)` / `slice(9)` 取值而错位，现在由 `changeEntry()` 统一构造。
-- **插件不导入任何 `@deepseek-ai/*` 运行时包**（只用 `node:` 内置模块和
-  `@deepseek-ai/cordis`）。以 pnpm `link:` 方式安装时，宿主包无法从插件的真实
-  源码路径解析，声明这类导入会让插件在加载期就崩溃；生成所需的请求构造与流
-  式拼装因此就近实现。`test/generate.mjs` 直接测这些单元。
-- 面板操作是普通 UI 行为（和 Cordis 面板一样），不会写入会话日志 /
-  模型提示词。AI 生成只填输入框，不会自动提交。
+- **commit 不暂存**：只提交已暂存内容；想全提交用「暂存全部」。顶栏「提交并推送」是显式复合
+  动作，不改变提交本身的语义；推送失败时提交已落地，提示会明确说明。
+- **pull 恒 `--ff-only`**：不产生意外的合并提交。
+- **无上游的 push 自动 `--set-upstream`**：这是 git 报错里自己给的建议，创建远端分支并让 git
+  记录跟踪关系（插件不手改 config）。
+- **绝不修改 git config、绝不碰凭据**：凭据来自系统 Credential Manager / SSH agent；缺
+  `user.name/email` 时直接报错，不代写。
+- **丢弃不可逆**：只按单条路径、必须二次确认；不做「全部丢弃」；冲突文件拒绝；未跟踪用
+  `clean -f -d`（不加 `-x`，ignored 文件不动）。
+- **储藏跟着 git 走**：默认不含未跟踪文件；`pop` 冲突保留条目；不做 `stash drop` / `stash apply`。
+- **amend 会改写历史**：不自动 force push，成功提示写明；amend 时禁用复合动作。
+- **forge 协同时可选**：只调用宿主公开的 `discoverBranch`（只读查询），缺服务/无 provider 静默跳过；
+  不伪造工具事件、不写会话日志、不直接写 forge 内部记录。
+- **差异查看是纯只读的**：`diff` 只跑 `git diff` / `git ls-files`，不写 index / 工作区 / 配置；
+  不依赖宿主右侧 Sidebar 那套还在迭代的 API，两栏与渲染都在插件内自带（只依赖 `react`，无语法
+  高亮）。
+- **插件不导入任何 `@deepseek-ai/*` 运行时包**：只用 `node:` 内置模块与 `@deepseek-ai/cordis`；
+  `llm`/`forgeSession`/`sessions` 都经 `ctx.get` 可选读取。
+- **面板操作不写会话日志、不进模型提示词**；AI 生成只填输入框，不自动提交；自动刷新只做只读轮询。
+- 规模上限：单侧 diff 40 万字符（行边界截断）；渲染由虚拟滚动/分页承担；未跟踪目录展开 50 个文件。
+- 面板状态是内存态：刷新后回到未选文件的单栏形态（有意）。
 
-## 开发说明
+## 开发与测试
 
-- 浏览器 bundle 为手写（无构建步骤）；改 `lib/client.js` 刷新即生效
-  （no-cache），改宿主半需要重启 `dsh web`。
-- 测试：
-  - `node test/smoke.mjs` —— 路由/信封/端点分发/入参校验（不 spawn git：会话沙箱
-    拦截子进程管道 stdio）；
-  - `node test/host-mount.mjs` —— 在真实 Cordis + 真实 `dsh-client-connection`
-    上挂载插件行（从 `DSH_HOME` 的 profile 解析 DSH 包，找不到则 SKIP）；
-  - `node test/generate.mjs` —— AI 生成单元测试：路由解析、prompt 组装、截断、
-    流式拼装（block-end 与纯 delta 两条路径）、终止失败/取消/空输出；
-  - `node test/render.mjs` —— 双界面真实 React SSR 渲染，含提交区三个控件、
-    diff 解析器（行号 / 分类 / `--` 开头的删除行）、行渲染、差异面板标题栏与
-    `act()` 的结果回传/本地化（需要一份 react/react-dom，可用
-    `DSH_GIT_REACT_ROOT` 指定，找不到则 SKIP）。
-  - `node test/slot-mount.mjs` —— 用真实 `SlotCore`/`SlotRegistry` 与真渲染器把两个
-    座位挂起来（找不到宿主包则 SKIP）。
-  - `npm run test:ui:settings` —— **真实浏览器**离线回归（playwright-core + 本机
-    Chrome，既不需要 `dsh web` 也不需要认证）：脚本自己起回环 http 服务，用
-    React UMD 挂载客户端半边，真点 ⚙ 设置弹层、切换语言、验证 `localStorage`
-    持久化与「✨ AI 生成」请求里带的 `language`；截图落在
-    `test/ui/settings-popover.png`。
-  - `npm run test:ui:branches` —— 同样离线、同样不需要认证：夹具里两个 remote
-    各有一个同名 `main`，在真浏览器里读分支切换器的 `<option>` 列表，断言远端
-    项给的是完整 ref（`origin/main` / `upstream/main` 可区分、没有哪两项重名）；
-    截图落在 `test/ui/select-open.png`。
-  - 也提供 `npm test`（依次跑五个）。
-  - `npm run test:commit` —— **端到端**：在临时仓库里真起 git，走插件的
-    `/dsh-git-rpc/commit` 路由提交，再用 `git log --format=%B` 逐字节比对提交
-    信息（多行、CRLF、中文、前导 `-`、shell 元字符等），并确认非法信息被拒且
-    不产生提交。
-  - `npm run test:diff` —— **端到端**：临时仓库里逐个验证 `diff` 端点：工作区
-    / 已暂存两侧、未跟踪文件与**未跟踪目录**、**逐文件二进制**（纯二进制目录
-    与文本+二进制混合目录）、**重命名配对**、删除、40 万字符截断、`status`
-    的能力位，以及路径校验与非仓库目录。
-  - `npm run test:push` —— **端到端**（完全离线：本地 bare 仓库当 `origin`）：
-    新建分支首次推送会 `--set-upstream` 创建远端分支并记录上游、已跟踪分支走
-    普通 `git push`、游离 HEAD / 无 remote / 多 remote 无 `origin` 各自的诊断码，
-    以及 `remote.pushDefault` 的选择顺序。纯决策部分由 `test/smoke.mjs` 里的
-    `pushPlan` 断言覆盖，不 spawn git。
-  - 这些都必须 spawn git 的管道 stdio，故**不在 `npm test` 内**——请在没有
-    该限制的环境（普通终端）单独运行。
-  git 命令集对照运行中的服务端做端到端验证。
+- **浏览器半** `lib/client.js` 是手写产物、**无构建步骤**：改它刷新页面即生效。
+- **宿主半** `lib/index.js` / `cordis.patch.yml`：改完需要**重启 `dsh web`**。
+- `npm test`：smoke → host-mount → slot-mount → generate → render（不 spawn git；render 需要
+  `react`/`react-dom`，可用 `DSH_GIT_REACT_ROOT` 指定，缺失时 SKIP）。
+- 真 git 端到端：`npm run test:diff` / `test:commit` / `test:push` / `test:checkout` /
+  `test:stash` / `test:discard`（需要普通终端；受限沙箱会拦子进程管道）。
+- 真浏览器脚本（playwright-core + 本机 Chrome，离线、免认证）：`npm run test:ui:settings` /
+  `test:ui:branches` / `test:ui:auto` / `test:ui:actions`；`test/ui/verify-diff.mjs` 需认证
+  （`DSH_GIT_UI_URL` / `DSH_GIT_UI_STORAGE_STATE`）。
+- 工程约定、坑与发版流程见 `AGENTS.md`；发布由推 `vX.Y.Z` tag 触发 GitHub Actions
+  （校验版本一致 → `npm test` → `npm publish --provenance`）。
 
 ## 许可
 
