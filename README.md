@@ -205,6 +205,8 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 - 真浏览器脚本（playwright-core + 本机 Chrome，离线、免认证）：`npm run test:ui:settings` /
   `test:ui:branches` / `test:ui:auto` / `test:ui:actions`；`test/ui/verify-diff.mjs` 需认证
   （`DSH_GIT_UI_URL` / `DSH_GIT_UI_STORAGE_STATE`）。
+- **版本号** `X.Y.Z`：`X` 用于不兼容的 API/架构变更（dsh 发布 1.x.x 前保持 0）、`Y` 用于新增功能、
+  `Z` 仅用于修 Bug 或兼容性优化；细则见 `AGENTS.md` §6。
 - 工程约定、坑与发版流程见 `AGENTS.md`；发布由推 `vX.Y.Z` tag 触发 GitHub Actions
   （校验版本一致 → `npm test` → `npm publish --provenance`）。
 

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Git workbench",
+    "description": "A collapsible Git workbench above the composer that follows the current session's workspace: switch and create branches, fetch, pull (fast-forward only), stage all, commit with an AI-drafted message, push, stash and restore, discard one change, and open a diff. Collapsed, it renders nothing and never covers the input."
+  }
+}

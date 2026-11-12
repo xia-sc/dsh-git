@@ -17,6 +17,8 @@
 | --- | --- |
 | `lib/index.js` | 宿主半：Cordis 插件行 `dsh-git`，自持 `/dsh-git-rpc` 前缀路由与 Connection 信封，`dispatch` 分发、入参校验、`runGit`、`ok`/`fail`。改它**必须重启 `dsh web`**。 |
 | `lib/client.js` | 浏览器半：`__ModuleLoader__.load` factory 内的全部 UI + store + diff 渲染；**改它刷新页面即生效**。 |
+| `locale/zh.json`、`locale/en.json` | 插件列表与详情页的显示元数据（`meta.title`/`meta.description`，宿主按界面语言读取，**不加载插件**）；`package.json` 的 `exports` 要保留 `./locale/*.json`、`files` 要含 `locale/*.json`。运行期面板/设置文案仍走 `lib/client.js` 的 `zh`/`en` 字典。 |
+| `icon.svg` | 插件列表/详情页图标（64px 视图框，自包含、无 `<text>`/脚本/`<image>`，≤256 KiB）：渐变圆角底 + 白色分支拓扑。由 `exports` 的 `"./icon"` 导出、`files` 含 `"icon.svg"`；**新增或修改该导出后宿主需重启一次**（Node 解析器在本进程内缓存了旧的 exports 结果）。 |
 | `cordis.patch.yml` | 组合层 patch（一行 `insert`）；**故意不写 `inject`**——模块导出的 `inject` 才是 Cordis 读的。 |
 | `test/smoke.mjs` | 路由/信封/分发/校验 + 客户端 bundle 结构；**不 spawn git**。 |
 | `test/host-*.mjs`、`test/slot-mount.mjs` | 宿主兼容守护：宿主发现（`host-root.mjs`，含 desktop `app.asar` 提取缓存）、真 Cordis/Connection 挂载（`host-mount.mjs`）、真 `SlotCore` 座位（`slot-mount.mjs`，slots 由 `host-slots.mjs` 按安装版本取）。 |
@@ -179,11 +181,23 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 
 ## 6. 本地验证与发版
 
+### 版本号规则（SemVer，`X.Y.Z`）
+
+| 位 | 递增条件 |
+| --- | --- |
+| `X` 主版本 | 发生**不兼容的 API 或架构变更**：RPC 端点/信封、配置字段、浏览器半加载方式、文件职责等破坏性改动。**dsh 发布 1.x.x 之前保持为 0**（当前 `0.10.0`）。 |
+| `Y` 次版本 | **新增功能**：新端点、新能力、用户可见的行为扩展，向后兼容。 |
+| `Z` 修订号 | **仅修复 Bug 或进行兼容性优化**，不引入新功能。 |
+
+发版时按改动性质只递增一位；`X` 保持 0 期间，破坏性变更同样体现在 `Y` 上。
+
+### 发版流程
+
 1. `npm test`（至少 `node test/smoke.mjs`）。
 2. 宿主半改动 → `test:diff`/`test:commit`/`test:push`/`test:stash`/`test:discard` + 请用户重启
    `dsh web` 后在真 GUI 点一遍。浏览器半改动 → 刷新页面，用 playwright/MCP 真点：开面板 → 点变更行 →
    `[data-dsh-git="diff"]` 出现 → 收起 → 拖右边缘 → 双击复位；设置走 `test:ui:settings`。
-3. 发版：改 `package.json` 版本（当前 0.9.3）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
+3. 发版：按上面的版本号规则递增 `package.json` 的版本（当前 0.10.0）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
    `git push origin master` → `git tag -a vX.Y.Z -m "…"` + `git push origin vX.Y.Z`（推 tag 即发布：
    workflow 校验 tag/版本、跑 `npm test`、`npm publish --provenance`）→ `gh release create`。
 4. CI 排错：workflow 表达式**只认单引号**；发布后别用 `npm view` 判断（缓存滞后），权威判据是

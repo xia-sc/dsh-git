@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Git workbench">
+  <defs>
+    <linearGradient id="dsh-git-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#dsh-git-bg)"/>
+
+  <!-- 主干：一条提交线（首尾两个提交点） -->
+  <path d="M22 18V46" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="22" cy="18" r="5.5" fill="#ffffff"/>
+  <circle cx="22" cy="46" r="5.5" fill="#ffffff"/>
+
+  <!-- 分支：从主干中段向右上分出，末端是新的分支头 -->
+  <path d="M22 36C30 36 42 32 42 24" fill="none" stroke="#ffffff" stroke-opacity="0.82"
+        stroke-width="5" stroke-linecap="round"/>
+  <circle cx="42" cy="24" r="5.5" fill="#ffffff" fill-opacity="0.92"/>
+</svg>

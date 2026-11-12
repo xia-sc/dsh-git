@@ -147,6 +147,8 @@ messages are `invalid-message`; the message reaches git on stdin through
 - Real-browser scripts (playwright-core + local Chrome, offline, no auth): `npm run test:ui:settings`
   / `test:ui:branches` / `test:ui:auto` / `test:ui:actions`; `test/ui/verify-diff.mjs` needs auth
   (`DSH_GIT_UI_URL` / `DSH_GIT_UI_STORAGE_STATE`).
+- **Versioning** `X.Y.Z`: `X` for incompatible API or architecture changes (stays 0 until dsh reaches
+  1.x.x), `Y` for new features, `Z` for bug fixes or compatibility-only work; details in `AGENTS.md` §6.
 - Engineering conventions, pitfalls and the release flow are in `AGENTS.md`.
 
 ## License
