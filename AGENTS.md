@@ -56,7 +56,9 @@ node test/ui/verify-settings.mjs   # 离线真浏览器（另：verify-branches 
 `inject = ["webServer", "connection"]`。**`llm`、`forgeSession`、`sessions` 一律不进 `inject`**，
 每次调用经 `ctx.get(name)` 读取（`optionalService`）：缺失时降级（`status.generate=false`、
 `generateMessage` 报 `llm-unavailable`、forge 发现静默跳过），而不是让整行 PENDING（路由不注册 →
-面板 405）。围栏 `connection.requestRejection` 不能去掉或降级。
+面板 405）。围栏不能去掉或降级：dsh 0.2.2 是 `connection.requestRejection`，dsh 0.2.3 起是
+WebServer 的 `webserver/authorize` + `connection.isTrustedRequest`（见 `channelFence`）；两者的
+宿主 API 都要随升级核对。
 
 ### 3.4 生效时机
 client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的 `dsh` 段→重启 `dsh web`。
@@ -166,7 +168,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 - **宿主守护的 SKIP 契约**：宿主根统一由 `test/host-root.mjs` 解析——**只有"这台机器完全没装 dsh"
   才 SKIP+0；"装了却解析不到"必须 FAIL+1**（反证：`DSH_HOME=<空目录>`+`DSH_ASAR=<不存在>`→SKIP；
   `DSH_GIT_DSH_ROOT=<空目录>`→SKIP；`DSH_ASAR=<非 asar 文件>`→FAIL）。`slot-mount` 的 slots 由
-  `host-slots.mjs` 取（安装树→`DSH_GIT_SLOTS_ROOT`→按版本缓存→npm 同版本真包 + SRI），不许 stub。
+  `host-slots.mjs` 取（`DSH_GIT_SLOTS_ROOT`→按版本缓存→npm 同版本真包 + SRI），不许 stub。
 - **真 git 六个**（diff/commit/push/checkout/stash/discard）：临时仓库、`core.autocrlf=false`、
   `mkdtemp`+`finally rm`。重命名只有真 git 能暴露；`push.mjs` 用假 `sessions`/`forgeSession` 断言
   forge 发现（`pushPlan.remote` 与非法 sessionId 在 smoke，wire 载荷在 render）。冲突 pop 必须把另一侧
@@ -185,7 +187,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 
 | 位 | 递增条件 |
 | --- | --- |
-| `X` 主版本 | 发生**不兼容的 API 或架构变更**：RPC 端点/信封、配置字段、浏览器半加载方式、文件职责等破坏性改动。**dsh 发布 1.x.x 之前保持为 0**（当前 `0.10.0`）。 |
+| `X` 主版本 | 发生**不兼容的 API 或架构变更**：RPC 端点/信封、配置字段、浏览器半加载方式、文件职责等破坏性改动。**dsh 发布 1.x.x 之前保持为 0**（当前 `0.10.1`）。 |
 | `Y` 次版本 | **新增功能**：新端点、新能力、用户可见的行为扩展，向后兼容。 |
 | `Z` 修订号 | **仅修复 Bug 或进行兼容性优化**，不引入新功能。 |
 
@@ -197,7 +199,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 2. 宿主半改动 → `test:diff`/`test:commit`/`test:push`/`test:stash`/`test:discard` + 请用户重启
    `dsh web` 后在真 GUI 点一遍。浏览器半改动 → 刷新页面，用 playwright/MCP 真点：开面板 → 点变更行 →
    `[data-dsh-git="diff"]` 出现 → 收起 → 拖右边缘 → 双击复位；设置走 `test:ui:settings`。
-3. 发版：按上面的版本号规则递增 `package.json` 的版本（当前 0.10.0）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
+3. 发版：按上面的版本号规则递增 `package.json` 的版本（当前 0.10.1）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
    `git push origin master` → `git tag -a vX.Y.Z -m "…"` + `git push origin vX.Y.Z`（推 tag 即发布：
    workflow 校验 tag/版本、跑 `npm test`、`npm publish --provenance`）→ `gh release create`。
 4. CI 排错：workflow 表达式**只认单引号**；发布后别用 `npm view` 判断（缓存滞后），权威判据是

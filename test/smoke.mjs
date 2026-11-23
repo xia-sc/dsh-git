@@ -30,7 +30,7 @@ if (inject.includes("llm")) {
 }
 
 // ── route capture ────────────────────────────────────────────────────────────
-// dsh >= 0.1.5-rc.1: the plugin owns the route on `webServer`; calling
+// dsh >= 0.2.2-rc.1: the plugin owns the route on `webServer`; calling
 // `connection.rpc.handle` from an outside plugin throws
 // `cannot get property "webServer" without inject`. Guard against regression.
 let route = null;
@@ -51,7 +51,7 @@ const ctx = {
   llm,
   connection: {
     rpc: {
-      handle() { throw new Error("connection.rpc.handle must not be used on dsh >= 0.1.5-rc.1"); }
+      handle() { throw new Error("connection.rpc.handle must not be used on dsh >= 0.2.2-rc.1"); }
     }
   },
   webServer: {
@@ -81,9 +81,56 @@ if (effects !== 1) throw new Error(`expected exactly one ctx.effect, got ${effec
   } catch (error) {
     threw = error;
   }
-  if (threw === null || !/0\.1\.5-rc\.1/.test(threw.message)) {
+  if (threw === null || !/0\.2\.2-rc\.1/.test(threw.message)) {
     throw new Error(`apply must refuse an unfenceable host, got ${threw === null ? "no error" : threw.message}`);
   }
+}
+
+// dsh 0.2.3-alpha.2 dropped `connection.requestRejection`: its WebServer
+// authorizes named routes through the Connection service's `webserver/authorize`
+// hook, and the remaining source policy is `connection.isTrustedRequest`. The
+// channel must mount on that shape too, and keep refusing a foreign authority
+// on its own (a route mounted on a bare WebServer would otherwise be open).
+{
+  let modernRoute = null;
+  const requestHost = { value: "attacker.example" };
+  apply({
+    effect(fn) { return fn(); },
+    get(name) {
+      if (name !== "connection") return undefined;
+      return { isTrustedRequest: (request) => request.headers.host === "127.0.0.1:3080" };
+    },
+    webServer: { register(candidate) { modernRoute = candidate; return () => { modernRoute = null; }; } }
+  });
+  if (modernRoute === null) throw new Error("a host exposing only isTrustedRequest must still mount /dsh-git-rpc");
+
+  async function askModern() {
+    const req = new EventEmitter();
+    req.url = "/dsh-git-rpc/status";
+    req.method = "POST";
+    req.headers = { "content-type": "application/json", host: requestHost.value };
+    req.resume = () => {};
+    const res = new EventEmitter();
+    const out = [];
+    res.writableEnded = false;
+    res.statusCode = 0;
+    res.setHeader = () => {};
+    res.end = (chunk) => {
+      if (chunk !== undefined) out.push(String(chunk));
+      res.writableEnded = true;
+    };
+    const pending = modernRoute.handler(req, res);
+    req.emit("data", Buffer.from("{}", "utf8"));
+    req.emit("end");
+    await pending;
+    return { status: res.statusCode, text: out.join("") };
+  }
+
+  const foreign = await askModern();
+  if (foreign.status !== 403) throw new Error(`a modern host must still refuse a foreign Host with 403, got ${foreign.status}`);
+  requestHost.value = "127.0.0.1:3080";
+  const trusted = await askModern();
+  if (trusted.status !== 400) throw new Error(`a trusted Host must reach the envelope reader (400), got ${trusted.status}`);
 }
 
 // ── the browser's own wire envelope, driven through the route handler ────────

@@ -3,15 +3,12 @@
 // Why this file exists
 // --------------------
 // `test/slot-mount.mjs` drives the REAL `@deepseek-ai/dsh-client-ui-renderer`
-// against the REAL `SlotCore` implementation. Up to dsh 0.2.0 the desktop/CLI
-// host shipped `@deepseek-ai/dsh-client-ui-slots` as an installable package
-// (a nested dependency of the host bundle), so the test resolved it out of the
-// installed tree like any other host package. dsh 0.2.1 changed the packaging:
-// slots (together with primitives / dockkit / client-store) is INLINED into
-// `dsh-web-frontend/dist` and published to the browser through the shell
-// bundle's shared module table (`staticModules: { "…/slots": SI, … }` in the
-// shell entry). The asar/profile therefore contains no slots package at all,
-// while `dsh-client-ui-renderer/lib/client.js` still does
+// against the REAL `SlotCore` implementation. Every supported dsh release
+// (0.2.2-rc.1 and newer) ships slots (together with primitives / dockkit /
+// client-store) INLINED into `dsh-web-frontend/dist`, published to the browser
+// through the shell bundle's shared module table (`staticModules: { "…/slots":
+// SI, … }` in the shell entry). The asar/profile therefore contains no slots
+// package at all, while `dsh-client-ui-renderer/lib/client.js` still does
 // `require("@deepseek-ai/dsh-client-ui-slots")` — in the page that require is
 // answered by the shell table, in node there is no page.
 //
@@ -25,14 +22,12 @@
 //
 // Resolution order
 // ----------------
-//   1. The installed host tree (caller-supplied probe) — the pre-0.2.1 layout,
-//      unchanged and offline.
-//   2. `DSH_GIT_SLOTS_ROOT` — authoritative when set: the directory must BE the
+//   1. `DSH_GIT_SLOTS_ROOT` — authoritative when set: the directory must BE the
 //      package root (package.json + lib/ entry). Bad value is a failure, never
 //      a silent fallback; it is also the documented offline escape hatch.
-//   3. The per-version cache `%TEMP%/dsh-git-slots/<version>` — populated by a
+//   2. The per-version cache `%TEMP%/dsh-git-slots/<version>` — populated by a
 //      previous run, so the network is touched once per host version.
-//   4. The npm registry: read the version's metadata, download its tarball,
+//   3. The npm registry: read the version's metadata, download its tarball,
 //      verify `dist.integrity` when present, and extract just package.json plus
 //      `lib/**/*.js`. `DSH_GIT_SLOTS_REGISTRY` overrides the registry base URL
 //      (a mirror, or a dead URL to prove the failure path).
@@ -105,7 +100,7 @@ function slotsFailure(version, notes, hint) {
   return [
     `cannot obtain ${SLOTS_PACKAGE}@${version}, which the installed host's renderer requires:`,
     ...notes.map((note) => `  - ${note}`),
-    `  dsh >= 0.2.1 no longer ships this package: it is inlined into the shell bundle's shared module table,`,
+    `  dsh >= 0.2.2-rc.1 no longer ships this package: it is inlined into the shell bundle's shared module table,`,
     `  which only exists in a browser page, so node cannot read it out of the installed host.`,
     `  The guard loads the SAME version from npm instead of faking a slot implementation.`,
     `  fix (any one): go online once (this test caches the package at ${cache}),`,
@@ -217,31 +212,17 @@ async function downloadPackage(version, log) {
 
 /**
  * Obtain an importable copy of the host's slot core, version-matched to the
- * installed renderer unless the installed host still ships the package itself.
+ * installed renderer.
  * @param options.version - version of the installed `dsh-client-ui-renderer`.
- * @param options.locateInstalled - probe for a package directory in the installed host tree; may throw.
  * @param options.log - progress/diagnostic sink (defaults to a no-op).
- * @returns `{ dir, version, entry, source }` — source is `installed` / `override` / `cache` / `registry`.
+ * @returns `{ dir, version, entry, source }` — source is `override` / `cache` / `registry`.
  * @throws when no copy can be obtained; the caller maps that onto FAIL vs SKIP.
  */
-export async function ensureSlotsPackage({ version, locateInstalled, log = () => {} } = {}) {
+export async function ensureSlotsPackage({ version, log = () => {} } = {}) {
   if (typeof version !== "string" || version === "") throw new Error("ensureSlotsPackage needs the installed renderer's version");
   const notes = [];
 
-  // 1. The pre-0.2.1 layout: the host vendors the package itself.
-  if (typeof locateInstalled === "function") {
-    try {
-      const hit = locateInstalled();
-      const { manifest, entry } = readPackageDir(hit?.dir);
-      return { dir: resolve(hit.dir), version: manifest.version, entry, source: "installed" };
-    } catch (error) {
-      notes.push(`installed host tree: ${error.message}`);
-    }
-  } else {
-    notes.push("installed host tree: no probe supplied");
-  }
-
-  // 2. Explicit override, authoritative and offline-friendly.
+  // 1. Explicit override, authoritative and offline-friendly.
   const override = process.env.DSH_GIT_SLOTS_ROOT;
   if (typeof override === "string" && override !== "") {
     try {
@@ -252,13 +233,13 @@ export async function ensureSlotsPackage({ version, locateInstalled, log = () =>
     }
   }
 
-  // 3. A copy cached by an earlier run for this exact host version.
+  // 2. A copy cached by an earlier run for this exact host version.
   const cacheDir = slotsCacheDir(version);
   const cached = usablePackage(cacheDir);
   if (cached !== undefined) return { dir: cacheDir, version: cached.manifest.version, entry: cached.entry, source: "cache" };
   notes.push(`cache: ${cacheDir} holds no usable copy`);
 
-  // 4. The registry, at the version the installed renderer was built with.
+  // 3. The registry, at the version the installed renderer was built with.
   try {
     const dir = await downloadPackage(version, log);
     const { manifest, entry } = readPackageDir(dir);

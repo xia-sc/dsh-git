@@ -55,21 +55,19 @@
 // to catch silent host-side regressions, so a resolution failure on a machine
 // that DOES have a profile must stay loud.
 //
-// Slot core in dsh >= 0.2.1
-// -------------------------
-// dsh 0.2.1 inlined `@deepseek-ai/dsh-client-ui-slots` (with primitives /
-// dockkit / client-store) into `dsh-web-frontend/dist` and hands it to the page
-// through the shell bundle's shared module table. The installed host therefore
-// no longer contains the package, while the renderer still does
+// Slot core in dsh >= 0.2.2-rc.1
+// -------------------------------
+// Every supported dsh release inlines `@deepseek-ai/dsh-client-ui-slots` (with
+// primitives / dockkit / client-store) into `dsh-web-frontend/dist` and hands it
+// to the page through the shell bundle's shared module table. The installed host
+// therefore contains no such package, while the renderer still does
 // `require("@deepseek-ai/dsh-client-ui-slots")` — the shell table answers that
-// require in a browser, and node has no page. This test resolves the core in
-// two steps: from the installed host tree when the host still vendors it
-// (<= 0.2.0, offline), otherwise through `test/host-slots.mjs`, which loads the
-// SAME version the installed renderer was built with from npm (cached per
-// version). No fake slot implementation is ever registered — the renderer talks
-// to the real `SlotCore`. `DSH_GIT_SLOTS_ROOT` points at an extracted copy for
-// offline runs; a value that is not a real package fails loudly instead of
-// falling back to a skip.
+// require in a browser, and node has no page. This test resolves the core
+// through `test/host-slots.mjs`, which loads the SAME version the installed
+// renderer was built with from npm (cached per version). No fake slot
+// implementation is ever registered — the renderer talks to the real `SlotCore`.
+// `DSH_GIT_SLOTS_ROOT` points at an extracted copy for offline runs; a value
+// that is not a real package fails loudly instead of falling back to a skip.
 //
 // SSR is not a browser
 // --------------------
@@ -117,10 +115,7 @@ import { ensureSlotsPackage } from "./host-slots.mjs";
 // Profile-first, like test/host-mount.mjs and test/render.mjs:
 //   $DSH_HOME/profiles/web/node_modules → $DSH_HOME/profiles/node_modules
 //   (default DSH_HOME = ~/.dsh) → the repo's own node_modules (where the local
-//   react/react-dom live) → roots discovered by walking up from a resolved
-//   @deepseek-ai package (see addVendoredRoots — the dsh bundle vendors its
-//   client packages as nested deps, and a profile can hold a DANGLING junction
-//   for one of them) → anchors at this file's directory and the repo root.
+//   react/react-dom live) → anchors at this file's directory and the repo root.
 //
 // DSH_GIT_DSH_ROOT is a deliberate OVERRIDE and is authoritative when set: it
 // does not silently fall back to the profiles. That is what makes the SKIP path
@@ -169,27 +164,6 @@ function locate(spec) {
   throw new Error(reason);
 }
 
-/**
- * Append every `…/@deepseek-ai` node_modules directory on the way up from one
- * resolved entry file. The dsh bundle vendors its own client packages as nested
- * dependencies, and a profile can hold a DANGLING junction for one of them
- * (a `link:` install whose target moved), so the bundle's own node_modules is a
- * legitimate fallback root — reached through the packages that DO resolve.
- * @param entryFile - absolute file inside a resolved `@deepseek-ai/*` package.
- */
-function addVendoredRoots(entryFile) {
-  const extra = [];
-  let dir = dirname(entryFile);
-  for (let step = 0; step < 8; step += 1) {
-    if (existsSync(join(dir, "@deepseek-ai", "dsh-client-ui-renderer", "package.json"))) extra.push(dir);
-    const up = dirname(dir);
-    if (up === dir) break;
-    dir = up;
-  }
-  for (const root of extra) if (!roots.includes(root)) roots.push(root);
-  return extra.length > 0;
-}
-
 /** Print the SKIP banner and leave with success (missing profile is not a failure). */
 function skip(reason) {
   console.log(`SKIP: ${reason}`);
@@ -217,40 +191,22 @@ try {
   reactDom = locate("react-dom");
   reactDomServer = locate("react-dom/server");
   dshVersion.renderer = JSON.parse(readFileSync(locate("@deepseek-ai/dsh-client-ui-renderer/package.json").file, "utf8")).version;
-  // The slot core: the installed host first (<= 0.2.0 vendors it), otherwise the
-  // version-matched npm package through test/host-slots.mjs (dsh >= 0.2.1
-  // inlines it into the shell and ships no copy — see the header). The package
-  // used to be a nested dependency of the host bundle and a profile junction for
-  // it can dangle, so widen the roots through the renderer that DID resolve
-  // before asking for it.
+  // The slot core is never installed: every supported dsh release inlines it
+  // into the shell bundle's shared module table (see the header), so the guard
+  // loads the version-matched npm package through test/host-slots.mjs.
   slotsPackage = await ensureSlotsPackage({
     version: dshVersion.renderer,
-    log: (line) => console.log(line),
-    locateInstalled: () => {
-      try {
-        return { dir: locate("@deepseek-ai/dsh-client-ui-slots/package.json").root };
-      } catch (miss) {
-        addVendoredRoots(rendererEntry);
-        try {
-          return { dir: locate("@deepseek-ai/dsh-client-ui-slots/package.json").root };
-        } catch {
-          throw miss;
-        }
-      }
-    }
+    log: (line) => console.log(line)
   });
   dshVersion.slots = slotsPackage.version;
-  // An installed copy keeps the historical `createRequire` load; an acquired one
-  // is the published ESM package, so it is imported. Either way the renderer's
-  // `require("@deepseek-ai/dsh-client-ui-slots")` is answered with the REAL
+  // The acquired copy is the published ESM package; importing it answers the
+  // renderer's `require("@deepseek-ai/dsh-client-ui-slots")` with the REAL
   // core — this test never registers a fake slot implementation.
-  slotsImpl = slotsPackage.source === "installed"
-    ? createRequire(join(slotsPackage.dir, "anchor.cjs"))("@deepseek-ai/dsh-client-ui-slots")
-    : await import(pathToFileURL(slotsPackage.entry).href);
+  slotsImpl = await import(pathToFileURL(slotsPackage.entry).href);
 } catch (error) {
   // A machine WITH a host install must fail loudly when a piece cannot be
   // resolved — this file is the browser half's version guard, and a guard that
-  // skipped here is exactly how the 0.2.0 desktop layout (host packages inside
+  // skipped here is exactly how a desktop layout (host packages inside
   // `app.asar`) went unnoticed. Only "no host install at all" is a skip.
   const verdict = unresolvedHost();
   if (verdict.skip === undefined) {

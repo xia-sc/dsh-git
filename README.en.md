@@ -60,7 +60,9 @@ dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
 Then **restart `dsh web`** (the bundle row and browser roster are composed at startup). Requires
-**dsh >= 0.1.5-rc.1**; forge cooperation needs **0.2.2+** with forge enabled.
+**dsh >= 0.2.2-rc.1**: `package.json` declares `engines.dsh: "^0.2.2-rc.1"`, so 0.2.2-rc.1 up to
+(but not including) 0.3.0 loads, and older releases are refused with `incompatible-version`. Forge
+cooperation additionally needs forge enabled on the host.
 
 Uninstall: `dsh plugin --profile web remove @xia-sc/dsh-git`.
 
@@ -72,7 +74,9 @@ that prefix route and speaks the same Connection envelope as `/api`:
 - Request: `POST /dsh-git-rpc/<endpoint>`, `application/json`,
   `{ type: "client-request", rpcId, method, payload: { args } }`
 - Response: `{ type: "server-response", rpcId, result: { ok: true, value } | { ok: false, error } }`
-- Fence: `connection.requestRejection` (Host/Origin + browser session cookie); not POST → 405,
+- Fence: Host/Origin plus the browser session cookie. dsh 0.2.2 exposes it as
+  `connection.requestRejection`; from dsh 0.2.3 the WebServer's `webserver/authorize` hook decides it
+  and the plugin re-checks the source policy through `connection.isTrustedRequest`. Not POST → 405,
   not JSON → 415, body too large → 413, outside the channel → 404.
 
 `cwd` must be absolute; `branch` matches `^[A-Za-z0-9][A-Za-z0-9._/-]*$`; `path` is repository-relative

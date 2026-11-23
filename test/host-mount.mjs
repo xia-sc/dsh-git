@@ -1,12 +1,19 @@
 // Mount test against a REAL Cordis host with the REAL dsh Connection service.
 // Run: node test/host-mount.mjs
 //
-// This is the regression guard for the dsh >= 0.1.5-rc.1 breakage: the host
-// half used to call `ctx.connection.rpc.handle(...)`, which an outside plugin
-// cannot do in this version — `HostConnectionService.rpc` registers through the
-// connection plugin's OWN context (`owner.effect(() => owner.webServer...)`),
-// whose inject is only `["credentials"]`, so the row failed to mount with
+// This is the regression guard for the dsh >= 0.2.2-rc.1 breakage: the host
+// half registered a third-party RPC channel itself because
+// `ctx.connection.rpc.handle(...)` cannot work for an outside plugin — the
+// service registers through the connection plugin's OWN context
+// (`owner.effect(() => owner.webServer...)`), whose inject does not include
+// `webServer`, so the row failed to mount with
 // `cannot get property "webServer" without inject`.
+//
+// It also pins the request fence across the two supported host generations:
+// dsh 0.2.2 exposes `connection.requestRejection()`, dsh 0.2.3-alpha.2 dropped
+// it in favour of the WebServer's `webserver/authorize` hook plus
+// `connection.isTrustedRequest()` (see `channelFence` in lib/index.js). A host
+// with neither must refuse to mount rather than serve an unfenced git channel.
 //
 // The DSH packages are resolved through test/host-root.mjs, so the test covers
 // whatever version is actually deployed — including the Electron **desktop**
@@ -85,17 +92,39 @@ await app.plugin({
 }).await();
 
 // The real Connection host service, built the way dsh-client-connection does.
-await app.plugin({
-  name: "client-connection",
-  inject: ["credentials"],
-  apply(ctx) {
-    const auth = { isAuthenticated: () => true, authorizeIndex: () => true, authenticatedUrl: (url) => url };
-    new HostConnectionService(ctx, [], auth);
-    ctx.inject(["webServer"], (webCtx) => {
-      webCtx.effect(() => webCtx.webServer.register({ kind: "prefix", path: "/api", handler: () => {} }), "client-connection: /api route");
-    });
-  }
-}).await();
+//
+// Both supported generations are handled, because the plugin must mount on
+// each: dsh 0.2.2-rc.1 took browser authentication as the third constructor
+// argument (`new HostConnectionService(ctx, trustedHosts, browserAuth)`), while
+// dsh 0.2.3-alpha.2 moved it into a `connection.authentication` service the
+// owning plugin provides and the constructor reads (`(ctx, trustedHosts)`).
+const { ConnectionAuthentication } = connectionModule;
+const auth = { isAuthenticated: () => true, authorizeIndex: () => true, authenticatedUrl: (url) => url };
+
+/** Mount one HostConnectionService plus its `/api` route, as the host plugin does. */
+async function mountConnectionService(app) {
+  await app.plugin({
+    name: "client-connection",
+    inject: ["credentials"],
+    apply(ctx) {
+      if (typeof ConnectionAuthentication === "function") {
+        new ConnectionAuthentication(ctx);
+        ctx.inject(["connection.authentication"], (authCtx) => {
+          new HostConnectionService(authCtx, []);
+          authCtx.inject(["webServer"], (webCtx) => {
+            webCtx.effect(() => webCtx.webServer.register({ kind: "prefix", path: "/api", handler: () => {} }), "client-connection: /api route");
+          });
+        });
+        return;
+      }
+      new HostConnectionService(ctx, [], auth);
+      ctx.inject(["webServer"], (webCtx) => {
+        webCtx.effect(() => webCtx.webServer.register({ kind: "prefix", path: "/api", handler: () => {} }), "client-connection: /api route");
+      });
+    }
+  }).await();
+}
+await mountConnectionService(app);
 
 const fiber = app.plugin({ name, inject, apply });
 let mounted = false;
@@ -130,13 +159,13 @@ console.log(`routes: ${routes.map((route) => `${route.kind} ${route.path}`).join
     console.log("NOTE: this host exports no RPC envelope schemas; envelope validation skipped");
   } else {
     /** Drive the mounted route handler exactly as `connection.rpc.call` does. */
-    async function post(pathname, body, raw) {
+    async function post(pathname, body, raw, extraHeaders) {
       const req = new EventEmitter();
       req.url = pathname;
       req.method = "POST";
       // A loopback Host is what the connection fence admits (it rejects a
       // missing Host outright), so this stands in for the browser's own header.
-      req.headers = { "content-type": "application/json", host: "127.0.0.1:3080" };
+      req.headers = { "content-type": "application/json", host: "127.0.0.1:3080", ...extraHeaders };
       req.resume = () => {};
       const res = new EventEmitter();
       const out = [];
@@ -186,7 +215,18 @@ console.log(`routes: ${routes.map((route) => `${route.kind} ${route.path}`).join
     const outsideCheck = serverResponseSchema.safeParse(JSON.parse(outside.text));
     if (!outsideCheck.success) throw new Error(`404 response is not a valid dsh envelope: ${outsideCheck.error.message}`);
 
+    // 5. The fence itself, which is the half that changed between host
+    //    generations: an untrusted Host/Origin must be refused before the
+    //    envelope is even parsed. dsh 0.2.2 answers through
+    //    `connection.requestRejection()`; dsh 0.2.3 through
+    //    `connection.isTrustedRequest()`. Both must yield 403 here.
+    const foreign = await post("/dsh-git-rpc/status", sent, undefined, { host: "attacker.example" });
+    if (foreign.status !== 403) throw new Error(`an untrusted Host must be refused with 403, got ${foreign.status} (${foreign.text.slice(0, 120)})`);
+    const crossSite = await post("/dsh-git-rpc/status", sent, undefined, { "sec-fetch-site": "cross-site" });
+    if (crossSite.status !== 403) throw new Error(`a cross-site request must be refused with 403, got ${crossSite.status}`);
+
     console.log("envelope schemas: client-request, failure, unknown-endpoint and 404 all validate against the host's own schemas");
+    console.log("request fence: untrusted Host and cross-site requests are refused with 403");
   }
 }
 
@@ -212,17 +252,7 @@ console.log(`routes: ${routes.map((route) => `${route.kind} ${route.path}`).join
       ctx.provide("credentials", { get: async () => undefined, set: async () => {} });
     }
   }).await();
-  await noLlmApp.plugin({
-    name: "client-connection",
-    inject: ["credentials"],
-    apply(ctx) {
-      const auth = { isAuthenticated: () => true, authorizeIndex: () => true, authenticatedUrl: (url) => url };
-      new HostConnectionService(ctx, [], auth);
-      ctx.inject(["webServer"], (webCtx) => {
-        webCtx.effect(() => webCtx.webServer.register({ kind: "prefix", path: "/api", handler: () => {} }), "client-connection: /api route");
-      });
-    }
-  }).await();
+  await mountConnectionService(noLlmApp);
   const noLlmFiber = noLlmApp.plugin({ name, inject, apply });
   try {
     await noLlmFiber.await();

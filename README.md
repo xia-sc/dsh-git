@@ -96,8 +96,9 @@ dsh plugin --profile web add @xia-sc/dsh-git
 dsh plugin --profile web add https://github.com/xia-sc/dsh-git
 ```
 
-然后**重启 `dsh web`**（bundle 行与浏览器 roster 在启动时组合）。要求 **dsh ≥ 0.1.5-rc.1**
-（forge 协同需要 0.2.2+ 且宿主启用 forge）。
+然后**重启 `dsh web`**（bundle 行与浏览器 roster 在启动时组合）。要求 **dsh ≥ 0.2.2-rc.1**
+（`package.json` 的 `engines.dsh` 为 `^0.2.2-rc.1`，即 0.2.2-rc.1 及以上、0.3.0 以下；
+更旧的版本会被宿主以 `incompatible-version` 拒绝安装/激活）。forge 协同还需要宿主启用 forge。
 
 卸载：
 
@@ -114,10 +115,13 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 | 宿主 | `lib/index.js` | Cordis 插件行 `dsh-git`，自持 `/dsh-git-rpc` 前缀路由，收发与 `/api` 相同的 Connection RPC 信封，并复用 connection 的 Host/Origin + 会话 Cookie 围栏。所有 git 调用走 `execFile`（无 shell），本地 30s / 网络 120s 超时，严格入参校验。 |
 | 浏览器 | `lib/client.js` | `dsh.client` bundle（手写、无构建步骤，仅依赖 `react`）：悬浮面板、胶囊、共享 store、diff 渲染。 |
 
-- **为什么自持 HTTP 路由（dsh ≥ 0.1.5-rc.1）**：该版本起外部插件调用 `ctx.connection.rpc.handle()`
+- **为什么自持 HTTP 路由（dsh ≥ 0.2.2-rc.1）**：从该版本起外部插件调用 `ctx.connection.rpc.handle()`
   会因 connection 插件自身的 Context 缺 `webServer` 而挂载失败。本插件改为自己注册路由、自己
-  收发同一套信封；围栏仍交给 `connection.requestRejection`，安全等级与 `/api` 一致。
-- **会话绑定由会话座位提供（dsh ≥ 0.1.6-alpha.2）**：会话列表快照不再带 `current`，当前会话改由
+  收发同一套信封。围栏仍由 connection 服务决定：dsh 0.2.2 用 `connection.requestRejection(req)`；
+  dsh 0.2.3 起该方法被移除，改由 WebServer 对每条具名路由触发 `webserver/authorize`（认证 +
+  Host/Origin），插件再以 `connection.isTrustedRequest(request)` 复核来源策略。两者都没有时整行
+  拒绝激活，绝不挂一条无围栏的 git 通道。
+- **会话绑定由会话座位提供**：会话列表快照不再带 `current`，当前会话改由
   渲染器的会话作用域适配器投递。胶囊（会话作用域）读 `useSessions` 取 cwd 并
   `store.bindSession(sessionId, cwd)`；面板（根作用域）只读共享 store，不自己找当前会话。
 - **可选能力全部走反射读取**：`llm`、`forgeSession`、`sessions` 都经 `ctx.get(name)` 按需读取，
@@ -131,8 +135,10 @@ dsh plugin --profile web remove @xia-sc/dsh-git
 - 请求：`POST /dsh-git-rpc/<endpoint>`，`content-type: application/json`，
   `{ type: "client-request", rpcId, method: <endpoint>, payload: { args } }`
 - 响应：`{ type: "server-response", rpcId, result: { ok: true, value } | { ok: false, error } }`
-- 围栏：`connection.requestRejection`（Host/Origin + 浏览器会话 Cookie）；非 POST → 405，
-  非 JSON → 415，请求体超限 → 413，路径不属于本通道 → 404。
+- 围栏：Host/Origin + 浏览器会话 Cookie。dsh 0.2.2 由 `connection.requestRejection` 承担；
+  dsh 0.2.3 起由 WebServer 的 `webserver/authorize` 钩子承担，插件再用
+  `connection.isTrustedRequest` 复核来源。非 POST → 405，非 JSON → 415，请求体超限 → 413，
+  路径不属于本通道 → 404。
 
 入参约定：`cwd` 必须绝对路径；`branch` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`；`path` 是仓库内相对
 路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白）。提交信息按真正的提交信息处理：CRLF→LF、
