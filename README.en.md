@@ -79,8 +79,11 @@ that prefix route and speaks the same Connection envelope as `/api`:
   and the plugin re-checks the source policy through `connection.isTrustedRequest`. Not POST → 405,
   not JSON → 415, body too large → 413, outside the channel → 404.
 
-`cwd` must be absolute; `branch` matches `^[A-Za-z0-9][A-Za-z0-9._/-]*$`; `path` is repository-relative
-(no absolute paths, `..`, leading `-`, control chars or surrounding spaces). Commit messages: CRLF→LF,
+`cwd` must be absolute; `branch` is any git branch name (the `git check-ref-format` rules: no leading `-`,
+ASCII control characters or spaces, `~ ^ : ? * [`, backslashes, `..`, `@{`, empty components, components
+starting with `.` or ending with `.lock`/`.`; a lone `@` is refused; Unicode names such as
+`refactor/7.34.1-国家电网-vue3` are allowed); `path` is repository-relative (no absolute paths, `..`,
+leading `-`, control chars or surrounding spaces). Commit messages: CRLF→LF,
 trailing spaces stripped per line, blank-line runs collapsed; empty/over-long (>10000)/control-char
 messages are `invalid-message`; the message reaches git on stdin through
 `git commit --cleanup=whitespace --file=-`.

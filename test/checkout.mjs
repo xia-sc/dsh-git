@@ -269,6 +269,26 @@ try {
     const ignored = await call("fetch", { cwd: repo, remote: "upstream" });
     check("an unknown remote argument is ignored, not rejected", ignored.ok === true, JSON.stringify(ignored));
   }
+
+  // ── non-ASCII branch names survive validation and reach git (issue #4) ────
+  // `for-each-ref` lists them, so the switcher must accept them too instead of
+  // answering invalid-branch. `git switch --guess` handles UTF-8 names on every
+  // platform the plugin supports.
+  {
+    for (const branch of ["refactor/7.34.1-国家电网-vue3", "feat/emoji-🚀"]) {
+      await git(repo, ["branch", branch]);
+      const switched = await call("checkout", { cwd: repo, branch });
+      check(`${branch} switches through the plugin`, switched.ok === true, JSON.stringify(switched));
+      check(`HEAD lands on ${branch}`, (await currentBranch(repo)) === branch, await currentBranch(repo));
+    }
+    const created = await call("createBranch", { cwd: repo, branch: "feature/中文新分支", base: "refactor/7.34.1-国家电网-vue3" });
+    check("creating a branch from a non-ASCII base succeeds", created.ok === true, JSON.stringify(created));
+    check("the non-ASCII new branch is checked out", (await currentBranch(repo)) === "feature/中文新分支", await currentBranch(repo));
+    check(
+      "the non-ASCII new branch starts at its base",
+      (await git(repo, ["rev-parse", "HEAD"])).trim() === (await git(repo, ["rev-parse", "refs/heads/refactor/7.34.1-国家电网-vue3"])).trim()
+    );
+  }
 } finally {
   await rm(repo, { recursive: true, force: true });
   await rm(origin, { recursive: true, force: true });

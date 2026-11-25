@@ -140,7 +140,9 @@ dsh plugin --profile web remove @xia-sc/dsh-git
   `connection.isTrustedRequest` 复核来源。非 POST → 405，非 JSON → 415，请求体超限 → 413，
   路径不属于本通道 → 404。
 
-入参约定：`cwd` 必须绝对路径；`branch` 匹配 `^[A-Za-z0-9][A-Za-z0-9._/-]*$`；`path` 是仓库内相对
+入参约定：`cwd` 必须绝对路径；`branch` 是合法的 git 分支名（按 `git check-ref-format` 的禁则校验：
+允许 Unicode，如 `refactor/7.34.1-国家电网-vue3`；拒绝 `-` 开头、ASCII 控制字符/空格、`~ ^ : ? * [`
+与反斜杠、`..`、`@{`、空组件、`.` 开头或 `.lock`/`.` 结尾的组件、单个 `@`）；`path` 是仓库内相对
 路径（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白）。提交信息按真正的提交信息处理：CRLF→LF、
 逐行去行尾空白、去首尾空行、连续空行折叠；空/超长（>10000）/含控制字符报 `invalid-message`；
 经 stdin 以 `git commit --cleanup=whitespace --file=-` 传入，因此空格、引号、换行、shell 元字符、

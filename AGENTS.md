@@ -66,9 +66,10 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 
 ### 3.5 git 调用
 一律 `runGit(cwd, args, signal, timeoutMs, stdin, allowExit)`：数组参数、无 shell、本地 30s /
-网络（fetch/pull/push）120s、输出上限 32MB。校验在跑 git 之前：`cwd` 绝对路径；`branch` 匹配
-`^[A-Za-z0-9][A-Za-z0-9._/-]*$`；`path` 走 `normalizedPath`（拒绝绝对路径、`..`、前导 `-`、控制字符、
-首尾空白）。`git diff --no-index` 以退出码 1 表示"不同"，用 `allowExit` 接住。**只读端点只读**：
+网络（fetch/pull/push）120s、输出上限 32MB。校验在跑 git 之前：`cwd` 绝对路径；`branch` 按
+`git check-ref-format` 的禁则校验（允许 Unicode，如中文/emoji 分支名；拒绝 `-` 开头、ASCII 控制字符
+与空格、`~ ^ : ? * [` 与反斜杠、`..`、`@{`、空组件、`.` 开头或 `.lock`/`.` 结尾的组件、单个 `@`）；
+`path` 走 `normalizedPath`（拒绝绝对路径、`..`、前导 `-`、控制字符、首尾空白）。`git diff --no-index` 以退出码 1 表示"不同"，用 `allowExit` 接住。**只读端点只读**：
 `status`/`branches`/`log`/`diff`/`headMessage` 不写 index/工作区/config。
 
 ### 3.6 错误码
@@ -187,7 +188,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 
 | 位 | 递增条件 |
 | --- | --- |
-| `X` 主版本 | 发生**不兼容的 API 或架构变更**：RPC 端点/信封、配置字段、浏览器半加载方式、文件职责等破坏性改动。**dsh 发布 1.x.x 之前保持为 0**（当前 `0.10.1`）。 |
+| `X` 主版本 | 发生**不兼容的 API 或架构变更**：RPC 端点/信封、配置字段、浏览器半加载方式、文件职责等破坏性改动。**dsh 发布 1.x.x 之前保持为 0**（当前 `0.10.2`）。 |
 | `Y` 次版本 | **新增功能**：新端点、新能力、用户可见的行为扩展，向后兼容。 |
 | `Z` 修订号 | **仅修复 Bug 或进行兼容性优化**，不引入新功能。 |
 
@@ -199,7 +200,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 2. 宿主半改动 → `test:diff`/`test:commit`/`test:push`/`test:stash`/`test:discard` + 请用户重启
    `dsh web` 后在真 GUI 点一遍。浏览器半改动 → 刷新页面，用 playwright/MCP 真点：开面板 → 点变更行 →
    `[data-dsh-git="diff"]` 出现 → 收起 → 拖右边缘 → 双击复位；设置走 `test:ui:settings`。
-3. 发版：按上面的版本号规则递增 `package.json` 的版本（当前 0.10.1）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
+3. 发版：按上面的版本号规则递增 `package.json` 的版本（当前 0.10.2）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
    `git push origin master` → `git tag -a vX.Y.Z -m "…"` + `git push origin vX.Y.Z`（推 tag 即发布：
    workflow 校验 tag/版本、跑 `npm test`、`npm publish --provenance`）→ `gh release create`。
 4. CI 排错：workflow 表达式**只认单引号**；发布后别用 `npm view` 判断（缓存滞后），权威判据是

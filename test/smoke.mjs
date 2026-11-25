@@ -331,11 +331,34 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid branch names (rejected before any git spawn)
 {
-  const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b"];
+  const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b", "@", "a.lock", "a.lock/b", "a/b.lock", "a.", "a/b.", "a//b", "a/", "a/.b", "a\tb", "a\u0001b", "a\u007fb"];
   for (const name of evil) {
     const res = await call("checkout", { cwd: ABS_CWD, branch: name });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
       throw new Error(`evil branch not rejected: ${JSON.stringify(name)} -> ${JSON.stringify(res)}`);
+    }
+  }
+}
+
+// Non-ASCII branch names are legal git refs (issue #4): validation must let
+// them reach the git layer instead of answering invalid-branch. The cwd here
+// has no repository, so git fails — that failure is the proof of dispatch.
+{
+  const valid = [
+    "refactor/7.34.1-国家电网-vue3",
+    "feat/emoji-🚀",
+    "feature/7.38.0+hotfix",
+    "feature/100%",
+    "feature/a&b",
+    "feature/a=b",
+    "feature/a@b",
+    "feature/全角　空格",
+    "a\u00a0b"
+  ];
+  for (const branch of valid) {
+    const res = await call("checkout", { cwd: NO_REPO_CWD, branch });
+    if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`a legal non-ASCII branch must reach git: ${JSON.stringify(branch)} -> ${JSON.stringify(res)}`);
     }
   }
 }
@@ -355,7 +378,7 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
 
 // invalid new-branch / base names (rejected before any git spawn)
 {
-  const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b"];
+  const evil = ["--help", "-n", "a..b", "a b", "a@{1}", "a\\b", "a:b", "a~b", "a^b", "", "  ", "a".repeat(300), "a'b", "a\"b", "a`b", "@", "a.lock", "a.lock/b", "a/b.lock", "a.", "a/b.", "a//b", "a/", "a/.b", "a\tb", "a\u0001b", "a\u007fb"];
   for (const name of evil) {
     const res = await call("createBranch", { cwd: ABS_CWD, branch: name, base: "main" });
     if (res.ok || res.error.code !== "internal" || pluginCode(res) !== "invalid-branch") {
@@ -381,6 +404,21 @@ const pluginCode = (res) => (res && res.error && res.error.details ? res.error.d
   const res = await call("createBranch", { cwd: NO_REPO_CWD, branch: "good-name" });
   if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
     throw new Error(`createBranch without base should dispatch to git: ${JSON.stringify(res)}`);
+  }
+}
+
+// The same git rule applies to a new branch name and to its base (issue #4):
+// both must accept non-ASCII names and reach git.
+{
+  for (const branch of ["feature/中文新分支", "feat/emoji-🚀"]) {
+    const res = await call("createBranch", { cwd: NO_REPO_CWD, branch, base: "main" });
+    if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
+      throw new Error(`a legal non-ASCII new branch must reach git: ${JSON.stringify(branch)} -> ${JSON.stringify(res)}`);
+    }
+  }
+  const res = await call("createBranch", { cwd: NO_REPO_CWD, branch: "feature/ascii", base: "refactor/7.34.1-国家电网-vue3" });
+  if (res.ok || pluginCode(res) === "invalid-branch" || pluginCode(res) === "invalid-cwd") {
+    throw new Error(`a legal non-ASCII base branch must reach git: ${JSON.stringify(res)}`);
   }
 }
 
