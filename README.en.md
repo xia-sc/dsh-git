@@ -49,7 +49,8 @@ amend the last commit · click a change to see its diff · new branch from any b
   button greys out. **Operation feedback stays one line** at the top of the body (localized summary
   plus git's own output behind "Details").
 - Buttons share equal widths; colors/spacing come from theme tokens; the panel is draggable
-  (double-click the header to reset).
+  (double-click the header to reset). Dragged to the top it stops below the window's title band,
+  so it never lands in the window's own drag row.
 
 ## Install
 

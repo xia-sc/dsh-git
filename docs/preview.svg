@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300" role="img" aria-label="Git workbench: a capsule above the composer opens a floating panel with a branch switcher, a change list and a side-by-side diff">
+  <defs>
+    <linearGradient id="dsh-git-detail-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="300" fill="#eef1f7"/>
+
+  <!-- 会话窗口 -->
+  <rect x="40" y="28" width="560" height="244" rx="16" fill="#ffffff" stroke="#d5dce8" stroke-width="2"/>
+  <circle cx="548" cy="44" r="4" fill="#dbe3f0"/>
+  <circle cx="564" cy="44" r="4" fill="#dbe3f0"/>
+  <circle cx="580" cy="44" r="4" fill="#dbe3f0"/>
+
+  <!-- 展开的 Git 面板（浮层） -->
+  <rect x="60" y="52" width="520" height="122" rx="12" fill="#ffffff" stroke="#cfd8e6" stroke-width="2"/>
+
+  <!-- 分支切换器 -->
+  <rect x="74" y="64" width="118" height="22" rx="11" fill="#e3edfe" stroke="#b7cdfb"/>
+  <path d="M82 68V82" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="82" cy="68" r="3" fill="#2563eb"/>
+  <circle cx="82" cy="82" r="3" fill="#2563eb"/>
+  <path d="M82 76C88 76 90 74 90 70" fill="none" stroke="#2563eb" stroke-opacity="0.75" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="90" cy="70" r="3" fill="#2563eb" fill-opacity="0.85"/>
+  <rect x="102" y="72" width="60" height="8" rx="4" fill="#2563eb" opacity="0.45"/>
+  <path d="M180 72l4 4 4-4" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 领先 / 落后 -->
+  <circle cx="208" cy="75" r="5" fill="#0ea5e9" opacity="0.75"/>
+  <circle cx="224" cy="75" r="5" fill="#93a9c4" opacity="0.6"/>
+
+  <!-- 变更列表 -->
+  <rect x="74" y="92" width="12" height="12" rx="3" fill="#f59e0b"/>
+  <rect x="94" y="95" width="240" height="8" rx="4" fill="#dbe3f0"/>
+  <path d="M342 94l8 8M350 94l-8 8" stroke="#c3cddd" stroke-width="2" stroke-linecap="round"/>
+
+  <rect x="74" y="110" width="12" height="12" rx="3" fill="#10b981"/>
+  <rect x="94" y="113" width="200" height="8" rx="4" fill="#dbe3f0"/>
+  <path d="M342 112l8 8M350 112l-8 8" stroke="#c3cddd" stroke-width="2" stroke-linecap="round"/>
+
+  <rect x="74" y="128" width="12" height="12" rx="3" fill="#ef4444"/>
+  <rect x="94" y="131" width="160" height="8" rx="4" fill="#dbe3f0"/>
+  <path d="M342 130l8 8M350 130l-8 8" stroke="#c3cddd" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- 操作按钮：暂存 / 提交 / 推送 -->
+  <rect x="74" y="146" width="88" height="22" rx="11" fill="#eef2f8" stroke="#dde4ee"/>
+  <rect x="170" y="146" width="88" height="22" rx="11" fill="#eef2f8" stroke="#dde4ee"/>
+  <rect x="266" y="146" width="88" height="22" rx="11" fill="url(#dsh-git-detail-grad)"/>
+  <rect x="92" y="153" width="48" height="8" rx="4" fill="#c3cddd"/>
+  <rect x="188" y="153" width="48" height="8" rx="4" fill="#c3cddd"/>
+  <rect x="286" y="153" width="44" height="8" rx="4" fill="#ffffff" opacity="0.85"/>
+
+  <!-- 两栏 diff -->
+  <rect x="370" y="64" width="196" height="100" rx="8" fill="#f8fafe" stroke="#e3e9f2"/>
+  <rect x="382" y="76" width="78" height="6" rx="3" fill="#c9d3e4"/>
+  <rect x="470" y="76" width="78" height="6" rx="3" fill="#c9d3e4"/>
+  <rect x="382" y="90" width="78" height="62" rx="4" fill="#ffffff" stroke="#e8eef7"/>
+  <rect x="470" y="90" width="78" height="62" rx="4" fill="#ffffff" stroke="#e8eef7"/>
+  <rect x="386" y="95" width="70" height="7" rx="2" fill="#fecaca"/>
+  <rect x="386" y="106" width="70" height="7" rx="2" fill="#a7f3d0"/>
+  <rect x="386" y="117" width="70" height="7" rx="2" fill="#dbe3f0"/>
+  <rect x="386" y="128" width="70" height="7" rx="2" fill="#dbe3f0"/>
+  <rect x="386" y="139" width="48" height="7" rx="2" fill="#dbe3f0"/>
+  <rect x="474" y="95" width="70" height="7" rx="2" fill="#fecaca"/>
+  <rect x="474" y="106" width="70" height="7" rx="2" fill="#fecaca"/>
+  <rect x="474" y="117" width="70" height="7" rx="2" fill="#a7f3d0"/>
+  <rect x="474" y="128" width="70" height="7" rx="2" fill="#dbe3f0"/>
+  <rect x="474" y="139" width="48" height="7" rx="2" fill="#dbe3f0"/>
+
+  <!-- 输入框与胶囊 -->
+  <rect x="60" y="190" width="176" height="26" rx="13" fill="url(#dsh-git-detail-grad)"/>
+  <path d="M76 196V208" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="76" cy="196" r="3" fill="#ffffff"/>
+  <circle cx="76" cy="208" r="3" fill="#ffffff"/>
+  <path d="M76 203C83 203 86 201 86 197" fill="none" stroke="#ffffff" stroke-opacity="0.9" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="86" cy="197" r="3" fill="#ffffff" fill-opacity="0.95"/>
+  <rect x="98" y="199" width="72" height="8" rx="4" fill="#ffffff" opacity="0.9"/>
+  <circle cx="212" cy="203" r="8" fill="#ffffff" opacity="0.28"/>
+  <circle cx="212" cy="203" r="3.5" fill="#ffffff"/>
+
+  <rect x="60" y="224" width="520" height="40" rx="20" fill="#f7f9fc" stroke="#cfd8e6" stroke-width="2"/>
+  <rect x="84" y="240" width="280" height="8" rx="4" fill="#dbe3f0"/>
+  <circle cx="546" cy="244" r="13" fill="#e6ecf6"/>
+  <path d="M546 250v-8M542 246l4-4 4 4" stroke="#b3c2d8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

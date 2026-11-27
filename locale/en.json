@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "Git workbench",
-    "description": "A collapsible Git workbench above the composer that follows the current session's workspace: switch and create branches, fetch, pull (fast-forward only), stage all, commit with an AI-drafted message, push, stash and restore, discard one change, and open a diff. Collapsed, it renders nothing and never covers the input."
+    "description": "The capsule above the composer opens a Git panel bound to the current session's workspace: branch switch and create, fetch, pull (fast-forward only), stage all, commit with an AI-drafted message, push, stash and restore, discard one change, and a two-column diff. Collapsed, it renders nothing; it never writes git config, never touches credentials, and never force-pushes.",
+    "detail": "docs/DETAIL.md"
   }
 }

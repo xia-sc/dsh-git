@@ -17,7 +17,8 @@
 | --- | --- |
 | `lib/index.js` | 宿主半：Cordis 插件行 `dsh-git`，自持 `/dsh-git-rpc` 前缀路由与 Connection 信封，`dispatch` 分发、入参校验、`runGit`、`ok`/`fail`。改它**必须重启 `dsh web`**。 |
 | `lib/client.js` | 浏览器半：`__ModuleLoader__.load` factory 内的全部 UI + store + diff 渲染；**改它刷新页面即生效**。 |
-| `locale/zh.json`、`locale/en.json` | 插件列表与详情页的显示元数据（`meta.title`/`meta.description`，宿主按界面语言读取，**不加载插件**）；`package.json` 的 `exports` 要保留 `./locale/*.json`、`files` 要含 `locale/*.json`。运行期面板/设置文案仍走 `lib/client.js` 的 `zh`/`en` 字典。 |
+| `locale/zh.json`、`locale/en.json` | 插件列表与详情页的显示元数据（`meta.title`/`meta.description`/`meta.detail`，宿主按界面语言读取，**不加载插件**）；`package.json` 的 `exports` 要保留 `./locale/*.json`、`files` 要含 `locale/*.json`。运行期面板/设置文案仍走 `lib/client.js` 的 `zh`/`en` 字典。 |
+| `docs/DETAIL.md`、`docs/DETAIL.zh.md`、`docs/preview.svg` | 插件详情页正文：**只有一行图片**（`meta.detail` 指向它），功能与用法只写在 `meta.description`。图是 640×300 自包含 SVG（无 `<text>`/脚本/远程资源），明暗主题都要可读；`files` 含 `"docs"`。声明了 `meta.detail` 就不再回退整份 README——改 README 不影响详情页，改这里才影响。 |
 | `icon.svg` | 插件列表/详情页图标（64px 视图框，自包含、无 `<text>`/脚本/`<image>`，≤256 KiB）：渐变圆角底 + 白色分支拓扑。由 `exports` 的 `"./icon"` 导出、`files` 含 `"icon.svg"`；**新增或修改该导出后宿主需重启一次**（Node 解析器在本进程内缓存了旧的 exports 结果）。 |
 | `cordis.patch.yml` | 组合层 patch（一行 `insert`）；**故意不写 `inject`**——模块导出的 `inject` 才是 Cordis 读的。 |
 | `test/smoke.mjs` | 路由/信封/分发/校验 + 客户端 bundle 结构；**不 spawn git**。 |
@@ -62,6 +63,7 @@ WebServer 的 `webserver/authorize` + `connection.isTrustedRequest`（见 `chann
 
 ### 3.4 生效时机
 client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的 `dsh` 段→重启 `dsh web`。
+`locale/*.json` 与 `docs/DETAIL*.md`/`docs/preview.svg`（插件页元数据与详情页）→刷新页面；宿主可能缓存旧文档，仍是旧内容就重启一次。
 新增端点必须同步改三处：`dispatch` 的 `case`、README 端点表、`test/smoke.mjs` 的校验矩阵。
 
 ### 3.5 git 调用
@@ -109,6 +111,10 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
   淡色底用 `color-mix(in srgb, <token> N%, transparent)`。
 - 布局：`selected` 非空 → `[左栏 300][diff]`，宽度手柄是面板右边缘；两栏**固定高度**
   `DIFF_PANEL_HEIGHT = min(72vh, calc(100vh - 184px))`，`box-sizing: border-box`；常量与 CSS 必须一致。
+- 拖动：`clampDragPos` 把面板限制在视口内，且**不许进入窗口顶部 chrome 带**——`panelTopInset()` 读根上的
+  `--dsh-frame-top-clearance`/`--dsh-windows-titlebar-height`/`--dsh-frame-chrome-top` 再加 `PANEL_TOP_GAP`。
+  Electron 的 `-webkit-app-region: drag` 是**几何**规则、不是层叠：浮层落进那条带会被吞掉全部指针事件
+  （拖不动、⚙/↻/– 点不中），z-index 再高也没用；面板根另设 `WebkitAppRegion: "no-drag"` 只作重叠兜底。
 - diff：`--- `/`+++ ` 只在 hunk 之外认作文件头；不换行 `max-content`、换行置 0 且 `white-space`
   写在文本 span；大 diff 用 `diffWindow` 虚拟滚动（行高三个数同步：`DIFF_ROW_HEIGHT`、
   `S.diffRow.lineHeight`、spacer），换行改用「再显示 N 行」；提示卡在滚动容器外；二进制按文件
@@ -133,7 +139,7 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 - `message` 文本在 `rpc()` 边界剥 ANSI（`stripAnsiEscapes`），**diff 与路径不动**。
 - `__internals` 是 render 测试出口：解析器、`diffWindow`、`GitDiffPane`、`outputView`、
   `branchOptions`/`baseOptions`、`checkoutResult`、`settingsView`、`sectionView`、`changeTagStyle`、
-  `panelBoxStyle`、`DIFF_PANEL_HEIGHT`、`sessionModelRoute`、`networkPrimary`、自动刷新的
+  `panelBoxStyle`/`panelTopInset`/`clampDragPos`、`DIFF_PANEL_HEIGHT`、`sessionModelRoute`、`networkPrimary`、自动刷新的
   `autoRefreshDelay`/`createAutoRefresher`/`frameSignature`/`diffValueSignature`/`readStoredAutoRefresh`/
   `AUTO_REFRESH_*`、stash/discard/amend 的 `stashDraft`/`stashable`/`discardIntent`/
   `discardConfirmView`/`amendView`。
@@ -200,6 +206,8 @@ client 改动→刷新页面；host 改动/`cordis.patch.yml`/`package.json` 的
 2. 宿主半改动 → `test:diff`/`test:commit`/`test:push`/`test:stash`/`test:discard` + 请用户重启
    `dsh web` 后在真 GUI 点一遍。浏览器半改动 → 刷新页面，用 playwright/MCP 真点：开面板 → 点变更行 →
    `[data-dsh-git="diff"]` 出现 → 收起 → 拖右边缘 → 双击复位；设置走 `test:ui:settings`。
+   插件页元数据/详情页（`locale/*.json`、`docs/`）→ 插件页确认只有「描述 + 特性图」，没有 README 回退
+   与元数据诊断。
 3. 发版：按上面的版本号规则递增 `package.json` 的版本（当前 0.10.2）→ 跑全部门禁 → 中文主题 + 分节正文提交 →
    `git push origin master` → `git tag -a vX.Y.Z -m "…"` + `git push origin vX.Y.Z`（推 tag 即发布：
    workflow 校验 tag/版本、跑 `npm test`、`npm publish --provenance`）→ `gh release create`。

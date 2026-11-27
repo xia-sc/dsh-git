@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "Git 工作台",
-    "description": "在输入框上方提供可折叠的 Git 工作台，跟随当前会话的工作区：切换与新建分支、fetch、pull（仅快进）、暂存全部、提交（可 AI 起草提交信息）、推送、储藏与恢复、丢弃单条改动、查看 diff。折叠时不渲染任何元素，不占用输入区。"
+    "description": "输入框上方的胶囊展开 Git 面板，跟随当前会话的工作区：分支切换与新建、fetch、pull（仅快进）、暂存全部、提交（可 AI 起草信息）、推送、储藏与恢复、丢弃单条改动、diff 两栏。收起时不渲染任何元素；不写 git config、不碰凭据，永不 force push。",
+    "detail": "docs/DETAIL.zh.md"
   }
 }

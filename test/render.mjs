@@ -1244,6 +1244,46 @@ if (store.getSnapshot().sessionId !== "s1") throw new Error("bindSession must pu
   console.log("panel box: single content-sized, two-pane pinned at", DIFF_PANEL_HEIGHT);
 }
 
+// Electron's `-webkit-app-region: drag` is a geometry rule, not a stacking one:
+// a fixed panel dropped into the window's top chrome band cannot be clicked or
+// dragged whatever its z-index. The drag clamp must stop it below that band.
+{
+  const { panelTopInset, clampDragPos } = mod.__internals;
+  if (typeof panelTopInset !== "function" || typeof clampDragPos !== "function") {
+    throw new Error("client must expose panelTopInset/clampDragPos for the render test");
+  }
+  if (panelTopInset() !== 0) throw new Error("a page without a DOM must report no top inset");
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  try {
+    const band = "40px";
+    globalThis.document = { documentElement: { localName: "html" } };
+    globalThis.window = {
+      innerWidth: 1400,
+      innerHeight: 900,
+      getComputedStyle() {
+        return { getPropertyValue: name => (name === "--dsh-frame-top-clearance" ? band : "") };
+      }
+    };
+    const inset = panelTopInset();
+    if (inset !== 44) throw new Error(`the clamp must clear the chrome band plus its gap, got ${inset}`);
+    const pulledToTop = clampDragPos(100, -80, 400, 400);
+    if (pulledToTop.top !== inset) throw new Error(`a panel dragged past the top must stop below the band: ${JSON.stringify(pulledToTop)}`);
+    const freeDrop = clampDragPos(100, 300, 400, 400);
+    if (freeDrop.top !== 300 || freeDrop.left !== 100) throw new Error(`free drops keep their position: ${JSON.stringify(freeDrop)}`);
+    const offRight = clampDragPos(5000, 300, 400, 400);
+    if (offRight.left !== 1400 - 120) throw new Error(`horizontal clamp keeps 120px on screen: ${JSON.stringify(offRight)}`);
+    const shortViewport = Object.assign({}, globalThis.window, { innerHeight: 100 });
+    globalThis.window = shortViewport;
+    if (clampDragPos(100, 0, 400, 400).top !== inset) throw new Error("a short window still keeps the panel below the band");
+  } finally {
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+  }
+  console.log("panel drag: clamped below the window drag band, free drops untouched");
+}
+
 // The draft route reads BOTH projection surfaces the host has shipped: the
 // session row's own `projectionValues` (0.1.6+) and the snapshot's per-session
 // `projectionsBySession[id].values` (0.1.7+). Losing either one silently
